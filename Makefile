@@ -1,37 +1,49 @@
-.PHONY: macos libusb ios payload clean
 
-CC ?= clang
+#INCL = -I/usr/local/Cellar/libirecovery/1.2.1/include \
+-I/usr/local/Cellar/libimobiledevice/1.3.0/include \
+-I/usr/local/Cellar/libimobiledevice-glue/1.3.2/include \
+-I/usr/local/Cellar/libusbmuxd/2.0.2/include \
+-I/usr/local/Cellar/libplist/2.7.0/include \
+-I/usr/local/Cellar/curl/8.6.0/include
+#LIBS = -L/usr/local/Cellar/libplist/2.7.0/lib \
+-L/usr/local/Cellar/libusbmuxd/2.0.2/lib \
+-L/usr/local/Cellar/libirecovery/1.2.1/lib \
+-L/usr/local/Cellar/libimobiledevice-glue/1.3.2/lib \
+-L/usr/local/Cellar/libimobiledevice/1.3.0/lib \
+-L/usr/local/Cellar/curl/8.6.0/lib
 
-macos:
+MACOSX_LIBS = /usr/local/Cellar/libplist/2.7.0/lib/libplist-2.0.a \
+/usr/local/Cellar/libirecovery/1.2.1/lib/libirecovery-1.0.a \
+/usr/local/Cellar/libimobiledevice-glue/1.3.2/lib/libimobiledevice-glue-1.0.dylib \
+/usr/local/Cellar/libimobiledevice/1.3.0/lib/libimobiledevice-1.0.dylib \
+/usr/local/Cellar/libusbmuxd/2.0.2/lib/libusbmuxd-2.0.a \
+/usr/local/Cellar/curl/8.6.0/lib/libcurl.a
+
+INCL = -I/usr/local/Cellar/libirecovery/1.2.1/include \
+-I/usr/local/Cellar/libimobiledevice/1.3.0/include \
+-I/usr/local/Cellar/libimobiledevice-glue/1.3.2/include \
+-I/usr/local/Cellar/libusbmuxd/2.0.2/include \
+-I/usr/local/Cellar/libplist/2.7.0/include \
+-I/usr/local/Cellar/curl/8.6.0/include
+
+SRC=main.c lzfse.c gastera1n.c ideviceenterrecovery.c idevicepwndfu.c
+
+.PHONY: macos libusb payload clean
+
+headers:
 	xxd -iC payload_A9.bin payload_A9.h
 	xxd -iC payload_notA9.bin payload_notA9.h
 	xxd -iC payload_notA9_armv7.bin payload_notA9_armv7.h
 	xxd -iC payload_handle_checkm8_request.bin payload_handle_checkm8_request.h
 	xxd -iC payload_handle_checkm8_request_armv7.bin payload_handle_checkm8_request_armv7.h
-	xcrun -sdk macosx clang -mmacosx-version-min=10.9 -Weverything gaster.c lzfse.c -o gaster -framework CoreFoundation -framework IOKit -Os
+
+macos: headers
+	xcrun -sdk macosx clang -mmacosx-version-min=10.15 -Os -Weverything $(INCL) $(MACOSX_LIBS) -framework CoreFoundation -framework IOKit $(SRC) -o gastera1n
 	$(RM) payload_A9.h payload_notA9.h payload_notA9_armv7.h payload_handle_checkm8_request.h payload_handle_checkm8_request_armv7.h
 
-libusb:
-	xxd -iC payload_A9.bin payload_A9.h
-	xxd -iC payload_notA9.bin payload_notA9.h
-	xxd -iC payload_notA9_armv7.bin payload_notA9_armv7.h
-	xxd -iC payload_handle_checkm8_request.bin payload_handle_checkm8_request.h
-	xxd -iC payload_handle_checkm8_request_armv7.bin payload_handle_checkm8_request_armv7.h
-	$(CC) -Wall -Wextra -Wpedantic -DHAVE_LIBUSB gaster.c lzfse.c -o gaster -lusb-1.0 -lcrypto -Os
+libusb: headers
+	$(CC) -Wall -Wextra -Wpedantic -DHAVE_LIBUSB gastera1n.c lzfse.c plugin.c -o gastera1n -lusb-1.0 -lcrypto -Os
 	$(RM) payload_A9.h payload_notA9.h payload_notA9_armv7.h payload_handle_checkm8_request.h payload_handle_checkm8_request_armv7.h
-
-ios:
-	mkdir headers
-	ln -s $(shell xcrun -sdk macosx -show-sdk-path)/usr/include/libkern headers
-	ln -s $(shell xcrun -sdk macosx -show-sdk-path)/System/Library/Frameworks/IOKit.framework/Headers headers/IOKit
-	xxd -iC payload_A9.bin payload_A9.h
-	xxd -iC payload_notA9.bin payload_notA9.h
-	xxd -iC payload_notA9_armv7.bin payload_notA9_armv7.h
-	xxd -iC payload_handle_checkm8_request.bin payload_handle_checkm8_request.h
-	xxd -iC payload_handle_checkm8_request_armv7.bin payload_handle_checkm8_request_armv7.h
-	xcrun -sdk iphoneos clang -arch armv7 -arch arm64 -isystemheaders -mios-version-min=9.0 -Weverything gaster.c lzfse.c -o gaster -framework CoreFoundation -framework IOKit -Os
-	$(RM) payload_A9.h payload_notA9.h payload_notA9_armv7.h payload_handle_checkm8_request.h payload_handle_checkm8_request_armv7.h
-	$(RM) -r headers
 
 payload:
 	as -arch arm64 payload_A9.S -o payload_A9.o
@@ -51,4 +63,4 @@ payload:
 	$(RM) payload_handle_checkm8_request_armv7.o
 
 clean:
-	$(RM) gaster
+	$(RM) gastera1n
