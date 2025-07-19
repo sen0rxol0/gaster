@@ -1,10 +1,28 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <string.h>
 //
 #include "log.h"
+#include "idevicedfu.h"
 #include "ideviceenterrecovery.h"
-#include "idevicepwndfu.h"
+#include "ideviceenterramdisk.h"
+#include "gastera1n.h"
+
+static int
+idevicepwn() {
+
+	if (idevicedfu_find() != 0) {
+		return -1;
+	}
+
+	return gastera1n();
+}
+
+static int
+idevicepwn_ramdisk() {
+	return ideviceenterramdisk_load();
+}
 
 int
 main(int argc, char **argv) {
@@ -14,18 +32,37 @@ main(int argc, char **argv) {
 	system("kill -STOP $(pgrep AMPDeviceDiscoveryAgent) 2> /dev/null"); // TY Siguza
 #endif
 	printf("%s\n", "--==== gastera1n ====--\n");
-	printf("%s\n", "// thanks to gaster and openra1n");
+	printf("%s\n", "// Super thanks to:");
+	printf("%s\n", "//\thttps://github.com/0x7ff/gaster");
+	printf("%s\n", "//\thttps://github.com/mineek/openra1n");
+	printf("%s\n", "// Credits:");
+	printf("%s\n", "//\thttps://github.com/synackuk/belladonna");
+	printf("%s\n", "//\thttps://github.com/tihmstar/libfragmentzip");
+	printf("%s\n", "//\thttps://github.com/tihmstar/img4tool");
+	printf("%s\n", "//\thttps://github.com/xerub/img4lib");
+	printf("%s\n", "//\thttps://github.com/libimobiledevice/libirecovery");
+	printf("\n\n");
+	// printf("REQUIRED: libplist, libxml2, img4lib");
 
-	int ret = 0;
-	ret = idevicepwndfu();
+	int ret = EXIT_SUCCESS;
+	ret = idevicepwn();
 
 	if (ret != 0) {
 		ret = ideviceenterrecovery();
 
 		if (ret == 0) {
 			sleep(9);
-			ret = idevicepwndfu();
+			ret = idevicepwn();
 		}
+	}
+
+	if (ret == 0) {
+		log_info("Device reached pwned DFU mode.");
+		ret = idevicepwn_ramdisk();
+	}
+
+	if (ret == 0) {
+		printf("DONE !");
 	}
 
 	return ret;

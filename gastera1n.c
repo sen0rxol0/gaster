@@ -1592,7 +1592,7 @@ gaster_decrypt_kbag(usb_handle_t *handle, const char *kbag_str) {
 }
 
 static bool
-gaster_decrypt_file(usb_handle_t *handle, const char *src_filename, const char *dst_filename) {
+gaster_decrypt_file(usb_handle_t *handle, const char *src_filename, char *dst_filename) {
 	uint8_t *buf, *dec;
 	size_t len, dec_sz;
 	bool ret = false;
@@ -1621,6 +1621,29 @@ gaster_reset(usb_handle_t *handle) {
 		return true;
 	}
 	return false;
+}
+
+int
+gastera1n_reset() {
+	usb_handle_t handle;
+
+	if (gaster_reset(&handle)) {
+		return 0;
+	}
+
+	return -1;
+}
+
+int
+gastera1n_decrypt(const char *src, char *dst) {
+
+	usb_handle_t handle;
+
+	if (gaster_decrypt_file(&handle, src, dst)) {
+		return 0;
+	}
+
+	return -1;
 }
 
 int

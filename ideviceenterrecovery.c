@@ -57,7 +57,7 @@ ideviceenterrecovery()
 	}
 
 	int res = 0;
-    log_info("Telling device with udid %s to enter recovery mode.\n", udid);
+    log_info("Telling connected device to enter recovery mode...\n", udid);
 	ldret = lockdownd_enter_recovery(client);
 	if (ldret == LOCKDOWN_E_SESSION_INACTIVE) {
 		lockdownd_client_free(client);

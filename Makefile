@@ -1,32 +1,20 @@
-
-#INCL = -I/usr/local/Cellar/libirecovery/1.2.1/include \
--I/usr/local/Cellar/libimobiledevice/1.3.0/include \
--I/usr/local/Cellar/libimobiledevice-glue/1.3.2/include \
--I/usr/local/Cellar/libusbmuxd/2.0.2/include \
--I/usr/local/Cellar/libplist/2.7.0/include \
--I/usr/local/Cellar/curl/8.6.0/include
-#LIBS = -L/usr/local/Cellar/libplist/2.7.0/lib \
--L/usr/local/Cellar/libusbmuxd/2.0.2/lib \
--L/usr/local/Cellar/libirecovery/1.2.1/lib \
--L/usr/local/Cellar/libimobiledevice-glue/1.3.2/lib \
--L/usr/local/Cellar/libimobiledevice/1.3.0/lib \
--L/usr/local/Cellar/curl/8.6.0/lib
-
 MACOSX_LIBS = /usr/local/Cellar/libplist/2.7.0/lib/libplist-2.0.a \
 /usr/local/Cellar/libirecovery/1.2.1/lib/libirecovery-1.0.a \
 /usr/local/Cellar/libimobiledevice-glue/1.3.2/lib/libimobiledevice-glue-1.0.dylib \
 /usr/local/Cellar/libimobiledevice/1.3.0/lib/libimobiledevice-1.0.dylib \
 /usr/local/Cellar/libusbmuxd/2.0.2/lib/libusbmuxd-2.0.a \
-/usr/local/Cellar/curl/8.6.0/lib/libcurl.a
+/usr/local/Cellar/curl/8.6.0/lib/libcurl.a \
+/usr/local/lib/libfragmentzip.dylib
 
 INCL = -I/usr/local/Cellar/libirecovery/1.2.1/include \
 -I/usr/local/Cellar/libimobiledevice/1.3.0/include \
 -I/usr/local/Cellar/libimobiledevice-glue/1.3.2/include \
 -I/usr/local/Cellar/libusbmuxd/2.0.2/include \
 -I/usr/local/Cellar/libplist/2.7.0/include \
--I/usr/local/Cellar/curl/8.6.0/include
+-I/usr/local/Cellar/curl/8.6.0/include \
+-I/usr/local/include
 
-SRC=main.c lzfse.c gastera1n.c ideviceenterrecovery.c idevicepwndfu.c
+SRC=main.c lzfse.c gastera1n.c ideviceenterrecovery.c idevicedfu.c ideviceenterramdisk.c kernel64patcher.c
 
 .PHONY: macos libusb payload clean
 
