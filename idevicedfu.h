@@ -4,5 +4,5 @@
 char* idevicedfu_info(char *t);
 int idevicedfu_find();
 void idevicedfu_sendcommand(char* command);
-int idevicedfu_sendfile(char* filepath);
+int idevicedfu_sendfile(const char* filepath);
 #endif

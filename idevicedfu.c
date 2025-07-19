@@ -183,11 +183,51 @@ idevicedfu_find() {
 	return ret;
 }
 
+int progress_cb(irecv_client_t client, const irecv_event_t* event);
+
 int
-idevicedfu_sendfile(char* filepath) {
+progress_cb(irecv_client_t client, const irecv_event_t* event) {
+	if (event->type == IRECV_PROGRESS) {
+
+        double progress = event->progress;
+        int i = 0;
+
+        if (progress < 0) {
+            return 0;
+        }
+
+        if (progress > 100) {
+            progress = 100;
+        }
+
+        printf("\r[");
+
+        for (i = 0; i < 50; i++) {
+            if (i < progress / 2) {
+                printf("=");
+            } else {
+                printf(" ");
+            }
+        }
+
+        printf("] %3.1f%%", progress);
+
+        fflush(stdout);
+
+        if (progress == 100) {
+            printf("\n");
+        }
+	}
+
+	return 0;
+}
+
+int
+idevicedfu_sendfile(const char* filepath) {
 
     irecv_error_t error = 0;
     irecv_client_t client = idevicedfu_open_client();
+    irecv_event_subscribe(client, IRECV_PROGRESS, &progress_cb, NULL);
 	error = irecv_send_file(client, filepath, IRECV_SEND_OPT_DFU_NOTIFY_FINISH);
 	log_debug("%s\n", irecv_strerror(error));
     irecv_close(client);
