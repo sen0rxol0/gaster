@@ -1650,53 +1650,55 @@ int
 gastera1n() {
 
 	usb_timeout = 5;
-	int ret = EXIT_FAILURE;
 	usb_handle_t handle;
 
 	if(gaster_checkm8(&handle)) {
-		ret = 0;
+		return 0;
 	}
 
-	return ret;
-
-	// char *env_usb_timeout = getenv("USB_TIMEOUT"), *env_usb_abort_timeout_min = getenv("USB_ABORT_TIMEOUT_MIN");
-	// int ret = EXIT_FAILURE;
-	// usb_handle_t handle;
-	//
-	// if(env_usb_timeout == NULL || sscanf(env_usb_timeout, "%u", &usb_timeout) != 1 || usb_timeout < 1) {
-	// 	usb_timeout = 5;
-	// }
-	// printf("usb_timeout: %u\n", usb_timeout);
-	// if(env_usb_abort_timeout_min == NULL || sscanf(env_usb_abort_timeout_min, "%u", &usb_abort_timeout_min) != 1 || usb_abort_timeout_min > usb_timeout) {
-	// 	usb_abort_timeout_min = 0;
-	// }
-	// printf("usb_abort_timeout_min: %u\n", usb_abort_timeout_min);
-	// if(argc == 2 && strcmp(argv[1], "reset") == 0) {
-	// 	if(gaster_reset(&handle)) {
-	// 		ret = 0;
-	// 	}
-	// } else if(argc == 2 && strcmp(argv[1], "pwn") == 0) {
-	// 	if(gaster_checkm8(&handle)) {
-	// 		ret = 0;
-	// 	}
-	// } else if(argc == 4 && strcmp(argv[1], "decrypt") == 0) {
-	// 	if(gaster_decrypt_file(&handle, argv[2], argv[3])) {
-	// 		ret = 0;
-	// 	}
-	// } else if(argc == 3 && strcmp(argv[1], "decrypt_kbag") == 0) {
-	// 	if(gaster_decrypt_kbag(&handle, argv[2])) {
-	// 		ret = 0;
-	// 	}
-	// } else {
-	// 	printf("Usage: env %s options\n", argv[0]);
-	// 	puts("env:");
-	// 	puts("USB_TIMEOUT - USB timeout in ms");
-	// 	puts("USB_ABORT_TIMEOUT_MIN - USB abort timeout minimum in ms");
-	// 	puts("options:");
-	// 	puts("reset - Reset DFU state");
-	// 	puts("pwn - Put the device in pwned DFU mode");
-	// 	puts("decrypt src dst - Decrypt file using GID0 AES key");
-	// 	puts("decrypt_kbag kbag - Decrypt KBAG using GID0 AES key");
-	// }
-	// return ret;
+	return -1;
 }
+
+// int
+// main(int argc, char **argv) {
+// 	char *env_usb_timeout = getenv("USB_TIMEOUT"), *env_usb_abort_timeout_min = getenv("USB_ABORT_TIMEOUT_MIN");
+// 	int ret = EXIT_FAILURE;
+// 	usb_handle_t handle;
+//
+// 	if(env_usb_timeout == NULL || sscanf(env_usb_timeout, "%u", &usb_timeout) != 1 || usb_timeout < 1) {
+// 		usb_timeout = 5;
+// 	}
+// 	printf("usb_timeout: %u\n", usb_timeout);
+// 	if(env_usb_abort_timeout_min == NULL || sscanf(env_usb_abort_timeout_min, "%u", &usb_abort_timeout_min) != 1 || usb_abort_timeout_min > usb_timeout) {
+// 		usb_abort_timeout_min = 0;
+// 	}
+// 	printf("usb_abort_timeout_min: %u\n", usb_abort_timeout_min);
+// 	if(argc == 2 && strcmp(argv[1], "reset") == 0) {
+// 		if(gaster_reset(&handle)) {
+// 			ret = 0;
+// 		}
+// 	} else if(argc == 2 && strcmp(argv[1], "pwn") == 0) {
+// 		if(gaster_checkm8(&handle)) {
+// 			ret = 0;
+// 		}
+// 	} else if(argc == 4 && strcmp(argv[1], "decrypt") == 0) {
+// 		if(gaster_decrypt_file(&handle, argv[2], argv[3])) {
+// 			ret = 0;
+// 		}
+// 	} else if(argc == 3 && strcmp(argv[1], "decrypt_kbag") == 0) {
+// 		if(gaster_decrypt_kbag(&handle, argv[2])) {
+// 			ret = 0;
+// 		}
+// 	} else {
+// 		printf("Usage: env %s options\n", argv[0]);
+// 		puts("env:");
+// 		puts("USB_TIMEOUT - USB timeout in ms");
+// 		puts("USB_ABORT_TIMEOUT_MIN - USB abort timeout minimum in ms");
+// 		puts("options:");
+// 		puts("reset - Reset DFU state");
+// 		puts("pwn - Put the device in pwned DFU mode");
+// 		puts("decrypt src dst - Decrypt file using GID0 AES key");
+// 		puts("decrypt_kbag kbag - Decrypt KBAG using GID0 AES key");
+// 	}
+// 	return ret;
+// }

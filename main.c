@@ -36,13 +36,24 @@ main(int argc, char **argv) {
 	printf("%s\n", "//\thttps://github.com/0x7ff/gaster");
 	printf("%s\n", "//\thttps://github.com/mineek/openra1n");
 	printf("%s\n", "// Credits:");
-	printf("%s\n", "//\thttps://github.com/synackuk/belladonna");
-	printf("%s\n", "//\thttps://github.com/tihmstar/libfragmentzip");
+	printf("%s\n", "//\thttps://github.com/xerub/sshrd");
+	printf("%s\n", "//\thttps://github.com/dayt0n/restored-external-hax");
 	printf("%s\n", "//\thttps://github.com/tihmstar/img4tool");
 	printf("%s\n", "//\thttps://github.com/xerub/img4lib");
+	printf("%s\n", "//\thttps://github.com/tihmstar/libfragmentzip");
+	printf("%s\n", "//\thttps://github.com/tihmstar/tsschecker");
+	printf("%s\n", "//\thttps://github.com/tihmstar/iBoot64Patcher");
+	printf("%s\n", "//\thttps://github.com/Cryptiiiic/iBoot64Patcher");
+	printf("%s\n", "//\thttps://github.com//Ralph0045/Kernel64Patcher");
+	printf("%s\n", "//\thttps://github.com//verygenericname/Kernel64Patcher");
+	printf("%s\n", "//\thttps://github.com//verygenericname/kerneldiff_C");
+	printf("%s\n", "//\thttps://github.com/synackuk/belladonna");
 	printf("%s\n", "//\thttps://github.com/libimobiledevice/libirecovery");
+	printf("%s\n", "//\thttps://github.com/libimobiledevice/libplist");
+	printf("%s\n", "//\thttps://github.com//ProcursusTeam/ldid");
+	printf("%s\n", "//\thttps://github.com/realnp/ibootim");
+
 	printf("\n\n");
-	// printf("REQUIRED: libplist, libxml2, img4lib");
 
 	int ret = EXIT_SUCCESS;
 	ret = idevicepwn();
