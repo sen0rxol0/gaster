@@ -15,9 +15,8 @@
 #include <libfragmentzip/libfragmentzip.h>
 
 // xxd -i iBoot64Patcher > iBoot64Patcher.h
-// xxd -i Kernel64Patcher > Kernel64Patcher.h
-extern unsigned char iBoot64Patcher[], Kernel64Patcher[];
-extern size_t iBoot64Patcher_len, Kernel64Patcher_len;
+extern unsigned char iBoot64Patcher[];
+extern size_t iBoot64Patcher_len;
 
 static device_loader loaded_device;
 static char *ipsw_url;
@@ -43,7 +42,7 @@ static const char *tsschecker = "tsschecker_macOS_v304";
 #define MAX_DIFF 16384
 #define DIFF_COMP_MAX_SIZE 20
 
-int
+static int
 kerneldiff(char *kc_raw, char *kc_patched, char *kc_diff) {
 
   struct stat st2;
@@ -112,9 +111,10 @@ execute_command(char *command) {
 		return false;
 	}
 
-	char line[130];
+    size_t line_sz = 130;
+	char line[line_sz];
 
-	while (fgets( line, sizeof line, fp)){
+	while (fgets( line, line_sz, fp)){
 	  printf("%s", line);
 	}
 
@@ -236,7 +236,7 @@ ideviceenterramdisk_downloadimages() {
 
 static int
 ideviceenterramdisk_decryptimages() {
-	log_info("Decrypting downloaded firmware...");
+	log_info("Decrypting downloaded images...");
 
     char *dec_list[] = { kernelcache_save_path, trustcache_save_path, ramdisk_save_path, devicetree_save_path, NULL };
 	char *cmd[CHAR_MAX];
@@ -395,13 +395,16 @@ ideviceenterramdisk_patchimages()
     }
 
     sprintf(cmd, "cp bootim@750x1334.im4p %s/bootim.im4p; cd %s;\
+        img4 -i ./bootim.im4p -o ./bootim.img4 -M ./IM4M", rdsk_staging_path, rdsk_staging_path);
+    execute_command(cmd);
+
+    sprintf(cmd, "cd %s;\
         img4 -i %s -o ./kernelcache.img4 -P ./kc.bpatch -M ./IM4M -T rkrn;\
         img4 -i %s -o ./trustcache.img4 -M ./IM4M -T rtsc;\
         img4 -i ./rdsk.dmg -o ./rdsk.img4 -M ./IM4M -A -T rdsk;\
         img4 -i %s -o ./dtree.img4 -M ./IM4M -T rdtr;\
         img4 -i %s.pwn -o ./ibec.img4 -A -M ./IM4M -T ibec;\
-        img4 -i %s.pwn -o ./ibss.img4 -A -M ./IM4M -T ibss;\
-        img4 -i ./bootim.im4p -o ./bootim.img4 -M ./IM4M;", rdsk_staging_path, rdsk_staging_path, kernelcache_save_path, trustcache_save_path, devicetree_save_path, iBEC_save_path, iBSS_save_path);
+        img4 -i %s.pwn -o ./ibss.img4 -A -M ./IM4M -T ibss;", rdsk_staging_path, kernelcache_save_path, trustcache_save_path, devicetree_save_path, iBEC_save_path, iBSS_save_path);
 
     if (!execute_command(cmd)) {
         return -1;
@@ -436,9 +439,6 @@ ideviceenterramdisk_bootrd() {
         ret = idevicedfu_sendfile(bootim_img4_path);
         idevicedfu_sendcommand("setpicture 0");
         idevicedfu_sendcommand("bgcolor 255 55 55");
-        sleep(2);
-        idevicedfu_sendcommand("bgcolor 0 0 0");
-        sleep(1);
     }
 
     if (ret == 0) {
