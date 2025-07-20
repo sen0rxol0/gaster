@@ -280,7 +280,7 @@ ideviceenterramdisk_patchimages()
     char *cmd[CHAR_MAX];
 
     if (access(tsschecker, F_OK) != 0) {
-        sprintf(cmd, "gunzip %s.gz; xattr -d com.apple.quarantine %s; chmod +x %s", tsschecker, tsschecker, tsschecker);
+        sprintf(cmd, "gunzip %s.gz; xattr -d com.apple.quarantine %s >/dev/null 2>&1; chmod +x %s", tsschecker, tsschecker, tsschecker);
         execute_command(cmd);
     }
 
@@ -321,7 +321,7 @@ ideviceenterramdisk_patchimages()
         fwrite(&iBoot64Patcher, 1, iBoot64Patcher_len, fp);
         fclose(fp);
 
-        execute_command("xattr -d com.apple.quarantine iBoot64Patcher.bin; chmod +x iBoot64Patcher.bin;");
+        execute_command("xattr -d com.apple.quarantine iBoot64Patcher.bin >/dev/null 2>&1; chmod +x iBoot64Patcher.bin;");
     }
 
     sprintf(cmd, "./iBoot64Patcher.bin %s.dec %s.pwn -n -b \"rd=md0 -v\"", iBEC_save_path, iBEC_save_path);
@@ -343,7 +343,7 @@ ideviceenterramdisk_patchimages()
     }
 
     if (access(ldid2, F_OK) != 0) {
-        sprintf(cmd, "gunzip %s.gz; xattr -d com.apple.quarantine %s; chmod +x %s", ldid2, ldid2, ldid2);
+        sprintf(cmd, "gunzip %s.gz; xattr -d com.apple.quarantine %s >/dev/null 2>&1; chmod +x %s", ldid2, ldid2, ldid2);
         execute_command(cmd);
     }
 
@@ -356,7 +356,7 @@ ideviceenterramdisk_patchimages()
     char *commands[cmd_list_len][CHAR_MAX];
 
     sprintf(cmd, "cd %s; cp %s.dec ./rdsk.dmg;\
-        hdiutil resize -size 192MB ./rdsk.dmg;\
+        hdiutil resize -size 170MB ./rdsk.dmg;\
         hdiutil attach ./rdsk.dmg -mountpoint %s;\
         sleep 5;", rdsk_staging_path, ramdisk_save_path, rdsk_mount_path);
     strcpy(commands[0], cmd);
@@ -396,7 +396,10 @@ ideviceenterramdisk_patchimages()
 
     sprintf(cmd, "cp bootim@750x1334.im4p %s/bootim.im4p; cd %s;\
         img4 -i ./bootim.im4p -o ./bootim.img4 -M ./IM4M", rdsk_staging_path, rdsk_staging_path);
-    execute_command(cmd);
+
+    if (!execute_command(cmd)) {
+        return -1;
+    }
 
     sprintf(cmd, "cd %s;\
         img4 -i %s -o ./kernelcache.img4 -P ./kc.bpatch -M ./IM4M -T rkrn;\
@@ -470,7 +473,7 @@ ideviceenterramdisk_load() {
 	int ret = EXIT_SUCCESS;
 	char *cmd[CHAR_MAX];
 
-	sprintf(cmd, "bash -c 'if [ ! -d %s ];then mkdir -p %s; else rm %s/*; fi'", rdsk_staging_path, rdsk_mount_path, rdsk_staging_path);
+	sprintf(cmd, "bash -c 'if [ ! -d %s ];then mkdir -p %s; else rm %s/* >/dev/null 2>&1; fi'", rdsk_staging_path, rdsk_mount_path, rdsk_staging_path);
 	ret = execute_command(cmd) ? 0 : -1;
 
 	if (ret == 0) {
