@@ -12,13 +12,14 @@
 #include "iBoot64Patcher.h"
 #include "kernel64patcher.h"
 
+#include <plist/plist.h>
 #include <libfragmentzip/libfragmentzip.h>
 
 // xxd -i iBoot64Patcher > iBoot64Patcher.h
 extern unsigned char iBoot64Patcher[];
 extern size_t iBoot64Patcher_len;
 
-static device_loader loaded_device;
+static device_loader ipsw_loader;
 static char *ipsw_url;
 static const char *rdsk_staging_path = "/tmp/gastera1n_rdsk",\
 *rdsk_mount_path = "/tmp/gastera1n_rdsk/dmg_mountpoint",\
@@ -35,8 +36,30 @@ static const char *iBSS_img4_path = "/tmp/gastera1n_rdsk/ibss.img4",\
 *ramdisk_img4_path = "/tmp/gastera1n_rdsk/rdsk.img4",\
 *trustcache_img4_path = "/tmp/gastera1n_rdsk/trustcache.img4",\
 *kernelcache_img4_path = "/tmp/gastera1n_rdsk/kernelcache.img4";
+
 static const char *ldid2 = "ldid_v2.1.5-procursus7_macosx_x86_64";
 static const char *tsschecker = "tsschecker_macOS_v304";
+
+void
+im4m_from_shsh(char *path, char *im4m_path) {
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* data = (char*)malloc(size);
+    if (data) fread(data, size, 1, f);
+    fclose(f);
+    plist_t shsh_plist = NULL;
+    plist_from_memory((const char*)data, (uint32_t)size, &shsh_plist, NULL);
+    plist_t ticket = plist_dict_get_item(shsh_plist, "ApImg4Ticket");
+    char *im4m = 0;
+    uint64_t im4m_size = 0;
+    plist_get_data_val(ticket, &im4m, &im4m_size);
+    f = fopen(im4m_path, "wb");
+    fwrite(im4m, 1, im4m_size, f);
+    fclose(f);
+}
 
 // kerneldiff original source: https://raw.githubusercontent.com/verygenericname/kerneldiff_C/refs/heads/main/kerneldiff.c
 #define MAX_DIFF 16384
@@ -183,22 +206,22 @@ ideviceenterramdisk_downloadimages() {
 
     while(device_loaders[i].identifier != NULL) {
         if(!strcmp(device_loaders[i].identifier, identifier)) {
-			loaded_device = device_loaders[i];
+			ipsw_loader = device_loaders[i];
             break;
         }
         i += 1;
     }
 
-    if (loaded_device.ipsw_url) {
+    if (ipsw_loader.ipsw_url) {
 
-		const char *kernelcache_path = loaded_device.kernelcache_path,\
-		*trustcache_path = loaded_device.trustcache_path,\
-		*ramdisk_path = loaded_device.ramdisk_path,\
-		*devicetree_path = loaded_device.devicetree_path,\
-		*iBEC_path = loaded_device.ibec_path,\
-		*iBSS_path = loaded_device.ibss_path;
+		const char *kernelcache_path = ipsw_loader.kernelcache_path,\
+		*trustcache_path = ipsw_loader.trustcache_path,\
+		*ramdisk_path = ipsw_loader.ramdisk_path,\
+		*devicetree_path = ipsw_loader.devicetree_path,\
+		*iBEC_path = ipsw_loader.ibec_path,\
+		*iBSS_path = ipsw_loader.ibss_path;
 
-		ipsw_url = (char*)loaded_device.ipsw_url;
+		ipsw_url = (char*)ipsw_loader.ipsw_url;
 
 
         log_debug("Found IPSW loader : %s", ipsw_url);
@@ -388,11 +411,19 @@ ideviceenterramdisk_patchimages()
         }
     }
 
-    sprintf(cmd, "img4tool -e -s %s -m %s/IM4M", shsh2_path, rdsk_staging_path);
+    char* im4m_save_path[sizeof rdsk_staging_path + 6];
+    sprintf(im4m_save_path, "%s/IM4M", rdsk_staging_path);
+    im4m_from_shsh(shsh2_path, im4m_save_path);
 
-    if (!execute_command(cmd)) {
+    if (access(im4m_save_path, F_OK) != 0) {
         return -1;
     }
+
+    // sprintf(cmd, "img4tool -e -s %s -m %s/IM4M", shsh2_path, rdsk_staging_path);
+    //
+    // if (!execute_command(cmd)) {
+    //     return -1;
+    // }
 
     sprintf(cmd, "cp bootim@750x1334.im4p %s/bootim.im4p; cd %s;\
         img4 -i ./bootim.im4p -o ./bootim.img4 -M ./IM4M", rdsk_staging_path, rdsk_staging_path);

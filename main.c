@@ -1,13 +1,18 @@
-#include <stdlib.h>
+#include <ctype.h>
 #include <stdio.h>
-#include <unistd.h>
+#include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
-//
+#include <unistd.h>
+
 #include "log.h"
+//
 #include "idevicedfu.h"
 #include "ideviceenterrecovery.h"
 #include "ideviceenterramdisk.h"
 #include "gastera1n.h"
+
+extern bool DEBUG_ENABLED;
 
 static int
 idevicepwn() {
@@ -16,6 +21,8 @@ idevicepwn() {
 		return -1;
 	}
 
+	sleep(1);
+
 	return gastera1n();
 }
 
@@ -23,6 +30,7 @@ static int
 idevicepwn_ramdisk() {
 	return ideviceenterramdisk_load();
 }
+
 
 int
 main(int argc, char **argv) {
@@ -38,7 +46,6 @@ main(int argc, char **argv) {
 	printf("%s\n", "// Credits:");
 	printf("%s\n", "//\thttps://github.com/xerub/sshrd");
 	printf("%s\n", "//\thttps://github.com/dayt0n/restored-external-hax");
-	printf("%s\n", "//\thttps://github.com/tihmstar/img4tool");
 	printf("%s\n", "//\thttps://github.com/xerub/img4lib");
 	printf("%s\n", "//\thttps://github.com/tihmstar/libfragmentzip");
 	printf("%s\n", "//\thttps://github.com/tihmstar/tsschecker");
@@ -52,8 +59,31 @@ main(int argc, char **argv) {
 	printf("%s\n", "//\thttps://github.com/libimobiledevice/libplist");
 	printf("%s\n", "//\thttps://github.com//ProcursusTeam/ldid");
 	printf("%s\n", "//\thttps://github.com/realnp/ibootim");
-
 	printf("\n\n");
+
+	DEBUG_ENABLED = false;
+	int pwnDFU = 0;
+	int opt;
+
+	while ((opt = getopt(argc, argv, "dhp")) != -1) {
+	    switch (opt) {
+			case 'h':
+				printf("%s\n", "Optional arguments:\n\
+					\t-d Enable debug\n\
+					\t-p Enter pwned DFU\n");
+				return 0;
+			case 'd':
+				log_warn("%s\n", "Debug is enabled!");
+				DEBUG_ENABLED = true;
+				break;
+			case 'p':
+				log_warn("%s\n", "Only entering pwned DFU mode!");
+				pwnDFU = 1;
+				break;
+			default:
+				break;
+     	}
+	}
 
 	int ret = EXIT_SUCCESS;
 	ret = idevicepwn();
@@ -67,10 +97,11 @@ main(int argc, char **argv) {
 		}
 	}
 
-	if (ret == 0) {
-		log_info("Device reached pwned DFU mode.");
-		ret = idevicepwn_ramdisk();
+	if (pwnDFU == 0 && ret == 0) {
+			log_info("Device reached pwned DFU mode.");
+			ret = idevicepwn_ramdisk();
 	}
+
 
 	if (ret == 0) {
 		printf("DONE !");

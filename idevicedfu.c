@@ -167,7 +167,6 @@ idevicedfu_find() {
         if (strcmp(mode, "DFU") == 0) {
             log_info("Found device in DFU mode.\n");
             ret = 0;
-
         } else if (strcmp(mode, "Recovery") == 0) {
             log_info("Found device in Recovery mode.\n");
             ret = ideviceenterdfu(chip_id);
@@ -225,23 +224,23 @@ progress_cb(irecv_client_t client, const irecv_event_t* event) {
 int
 idevicedfu_sendfile(const char* filepath) {
 
-    irecv_error_t error = 0;
+    irecv_error_t error = IRECV_E_SUCCESS;
     irecv_client_t client = idevicedfu_open_client();
     irecv_event_subscribe(client, IRECV_PROGRESS, &progress_cb, NULL);
 	error = irecv_send_file(client, filepath, IRECV_SEND_OPT_DFU_NOTIFY_FINISH);
 	log_debug("%s\n", irecv_strerror(error));
     irecv_close(client);
 
-    if (error == 0) {
-        return 0;
-    } else {
+    if (error != IRECV_E_SUCCESS) {
         return -1;
     }
+
+    return 0;
 }
 
 void
 idevicedfu_sendcommand(char* command) {
     irecv_client_t client = idevicedfu_open_client();
-    int ret = irecv_send_command(client, command);
+    irecv_send_command(client, command);
     irecv_close(client);
 }
