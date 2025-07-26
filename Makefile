@@ -2,7 +2,8 @@ SRC = $(shell pwd)
 LIBS_DIR = $(SRC)/libs_root
 STRIP = strip
 CC ?= cc
-CFLAGS += -I$(LIBS_DIR)/include -I$(SRC)/include -I$(SRC)
+CFLAGS += -I$(LIBS_DIR)/include
+# CFLAGS += -I$(LIBS_DIR)/include -I$(SRC)/include -I$(SRC)
 CFLAGS += -Os -Weverything -DGASTERAIN_VERSION=\"1.0\"
 # CFLAGS += -Wall -Wextra -DGASTERAIN_VERSION=\"2.0.0\" -Wall -Wextra -Wno-unused-parameter
 # CFLAGS += -Wno-unused-variable -std=c99 -pedantic-errors -D_C99_SOURCE -D_POSIX_C_SOURCE=200112L -D_DARWIN_C_SOURCE
