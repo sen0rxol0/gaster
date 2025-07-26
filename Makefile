@@ -2,7 +2,7 @@ SRC = $(shell pwd)
 LIBS_DIR = $(SRC)/libs_root
 STRIP = strip
 CC ?= cc
-CFLAGS += -I$(LIBS_DIR)/include
+CFLAGS += -I$(LIBS_DIR)/include -I/usr/local/include
 # CFLAGS += -I$(LIBS_DIR)/include -I$(SRC)/include -I$(SRC)
 CFLAGS += -Os -Weverything -DGASTERAIN_VERSION=\"1.0\"
 # CFLAGS += -Wall -Wextra -DGASTERAIN_VERSION=\"2.0.0\" -Wall -Wextra -Wno-unused-parameter
