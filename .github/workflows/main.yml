@@ -18,8 +18,6 @@ jobs:
             minos: 11.0
     runs-on: macos-13
     env:
-      MBEDTLS_VERSION: 3.5.2
-      READLINE_VERSION: 8.2
       LIBIMOBILEDEVICE_COMMIT: ed0d66d0341562731bb19928dfe48155509fa7a7
       LIBIRECOVERY_COMMIT: 7ce02c347b7c26e59498e6af31c9da51018d0fa1
       LIBIMOBILEDEVICE_GLUE_COMMIT: 362f7848ac89b74d9dd113b38b51ecb601f76094
@@ -59,7 +57,7 @@ jobs:
 
       - name: Select correct Xcode
         run: |
-          sudo xcode-select -s /Applications/Xcode_14.2.app
+          sudo xcode-select -s /Applications/Xcode_15.2.app
 
       - name: Setup environment
         run: |
@@ -71,7 +69,7 @@ jobs:
           echo "CC=$(xcrun --find cc)" >> $GITHUB_ENV
           echo "CXX=$(xcrun --find c++)" >> $GITHUB_ENV
           echo "CPP=$(xcrun --find cc) -E" >> $GITHUB_ENV
-          echo "CFLAGS=-g -Os -arch ${{ matrix.arch }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -isysroot ${{ env.SDK }} -isystem $(pwd)/sysroot/usr/local/include -Os" >> $GITHUB_ENV
+          echo "CFLAGS=-arch ${{ matrix.arch }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -isysroot ${{ env.SDK }} -isystem $(pwd)/sysroot/usr/local/include" >> $GITHUB_ENV
           echo "CPPFLAGS=-g -Os -arch ${{ matrix.arch }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -isysroot ${{ env.SDK }} -isystem $(pwd)/sysroot/usr/local/include -Wno-error-implicit-function-declaration -Os" >> $GITHUB_ENV
           echo "CXXFLAGS=-stdlib=libc++ -g -Os -isysroot ${{ env.SDK }} -arch ${{ matrix.arch }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -isystem $(pwd)/sysroot/usr/local/include -Os" >> $GITHUB_ENV
           echo "LDFLAGS=-g -Wl,-dead_strip -arch ${{ matrix.arch }} -isysroot ${{ env.SDK }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -L$(pwd)/sysroot/usr/local/lib" >> $GITHUB_ENV
