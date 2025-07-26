@@ -3,7 +3,7 @@ LIBS_DIR = $(SRC)/libs_root
 STRIP = strip
 CC ?= cc
 CFLAGS += -I$(LIBS_DIR)/include -I$(SRC)/include -I$(SRC)
-CFLAGS += -Wall -Wno-pointer-sign -Wno-incompatible-pointer-types -DGASTERAIN_VERSION=\"1.0\"
+CFLAGS += -0s -Weverything -DGASTERAIN_VERSION=\"1.0\"
 # CFLAGS += -Wall -Wextra -DGASTERAIN_VERSION=\"2.0.0\" -Wall -Wextra -Wno-unused-parameter
 # CFLAGS += -Wno-unused-variable -std=c99 -pedantic-errors -D_C99_SOURCE -D_POSIX_C_SOURCE=200112L -D_DARWIN_C_SOURCE
 LIBS += $(LIBS_DIR)/lib/libimobiledevice-1.0.a $(LIBS_DIR)/lib/libirecovery-1.0.a $(LIBS_DIR)/lib/libusbmuxd-2.0.a
@@ -17,7 +17,7 @@ CFLAGS += -Wno-nullability-extension
 ifeq (,$(findstring version-min=, $(CFLAGS)))
 CFLAGS += -mmacosx-version-min=10.8
 endif
-LDFLAGS += -Wl,-dead_strip
+#LDFLAGS += -Wl,-dead_strip
 LIBS += -framework CoreFoundation -framework IOKit
 else
 #linux
@@ -25,8 +25,8 @@ CFLAGS += -fdata-sections -ffunction-sections
 LDFLAGS += -static -no-pie -Wl,--gc-sections
 endif
 
-CFLAGS += -Os -g
-LIBS += -lc
+#CFLAGS += -Os -g
+#LIBS += -lc
 
 BUILD_STYLE = RELEASE
 BUILD_DATE := $(shell LANG=C date)
