@@ -1,15 +1,17 @@
 SRC = $(shell pwd)
-LIBS_DIR = $(SRC)/libs_root
+LIBS_DIR = /usr/local
+# LIBS_DIR = $(SRC)/libs_root
 STRIP = strip
 CC ?= cc
-CFLAGS += -I$(LIBS_DIR)/include -I/usr/local/include
+CFLAGS += -I$(LIBS_DIR)/include
 # CFLAGS += -I$(LIBS_DIR)/include -I$(SRC)/include -I$(SRC)
 CFLAGS += -Os -Weverything -DGASTERAIN_VERSION=\"1.0\"
 # CFLAGS += -Wall -Wextra -DGASTERAIN_VERSION=\"1.0.0\" -Wall -Wextra -Wno-unused-parameter
 # CFLAGS += -Wno-unused-variable -std=c99 -pedantic-errors -D_C99_SOURCE -D_POSIX_C_SOURCE=200112L -D_DARWIN_C_SOURCE
 LIBS += $(LIBS_DIR)/lib/libimobiledevice-1.0.a $(LIBS_DIR)/lib/libirecovery-1.0.a $(LIBS_DIR)/lib/libusbmuxd-2.0.a
 LIBS += $(LIBS_DIR)/lib/libimobiledevice-glue-1.0.a $(LIBS_DIR)/lib/libplist-2.0.a
-LIBS += $(LIBS_DIR)/lib/libfragmentzip.a -lcurl -lgeneral -pthread
+LIBS += $(LIBS_DIR)/lib/libfragmentzip.a $(LIBS_DIR)/Cellar/curl/8.6.0/lib/libcurl.a
+LIBS += -lgeneral -pthread
 ifeq ($(TARGET_OS),)
 TARGET_OS = $(shell uname -s)
 endif
