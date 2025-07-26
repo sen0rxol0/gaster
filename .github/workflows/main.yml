@@ -61,10 +61,10 @@ jobs:
 
       - name: Setup environment
         run: |
-          mkdir sysroot
+          # mkdir sysroot
           # echo "DESTDIR=$(pwd)/sysroot" >> $GITHUB_ENV
           echo "PREFIX=/usr/local" >> $GITHUB_ENV
-          # echo "PKG_CONFIG_PATH=$(pwd)/sysroot/usr/local/lib/pkgconfig" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig" >> $GITHUB_ENV
           echo "CONFIGURE_ARGS=--prefix=/usr/local --disable-shared --enable-static --build=x86_64-apple-darwin --host=${{ matrix.gnu_triple }}" >> $GITHUB_ENV
           # echo "CONFIGURE_ARGS=--prefix=/usr/local --disable-shared --enable-static" >> $GITHUB_ENV
           echo "CC=$(xcrun --find cc)" >> $GITHUB_ENV
@@ -82,19 +82,19 @@ jobs:
           # mkdir -p $(pwd)/sysroot/usr/local/lib
           # ln -sf $(pwd)/sysroot/usr/local/lib{,64}
 
-      - name: Build libfragmentzip
-        run: |
-          mkdir buildroot_macos-latest
-          wget "https://github.com/tihmstar/libgeneral/releases/download/84/buildroot_macos-latest.zip"
-          unzip -u "buildroot_macos-latest.zip"
-          rm buildroot_macos-latest.zip
-          # sudo cp -a buildroot_macos-latest/* sysroot/
-          sudo cp -a buildroot_macos-latest/usr/local/* ${{ env.PREFIX }}
-          cd libfragmentzip
-          ./autogen.sh ${{ env.CONFIGURE_ARGS }}
-          gmake -j$(sysctl -n hw.ncpu)
-          gmake -j$(sysctl -n hw.ncpu) install
-          cd ..
+      # - name: Build libfragmentzip
+      #   run: |
+      #     mkdir buildroot_macos-latest
+      #     wget "https://github.com/tihmstar/libgeneral/releases/download/84/buildroot_macos-latest.zip"
+      #     unzip -u "buildroot_macos-latest.zip"
+      #     rm buildroot_macos-latest.zip
+      #     # sudo cp -a buildroot_macos-latest/* sysroot/
+      #     sudo cp -a buildroot_macos-latest/usr/local/* ${{ env.PREFIX }}
+      #     cd libfragmentzip
+      #     ./autogen.sh ${{ env.CONFIGURE_ARGS }}
+      #     gmake -j$(sysctl -n hw.ncpu)
+      #     gmake -j$(sysctl -n hw.ncpu) install
+      #     cd ..
 
       - name: Build libplist
         run: |
