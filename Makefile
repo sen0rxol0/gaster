@@ -51,6 +51,7 @@ headers:
 gastera1n: headers
 	$(CC) $(CFLAGS) $(LDFLAGS) $(CSRC) $(LIBS) -o gastera1n
 	# xcrun -sdk macosx clang -mmacosx-version-min=10.15 -Os -Weverything $(INCL) $(MACOSX_LIBS) -framework CoreFoundation -framework IOKit $(SRC) -o gastera1n
+	$(RM) payload_A9.h payload_notA9.h payload_notA9_armv7.h payload_handle_checkm8_request.h payload_handle_checkm8_request_armv7.h
 
 .PHONY: all gastera1n headers
 
