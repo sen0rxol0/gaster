@@ -11,11 +11,11 @@ jobs:
           - arch: x86_64
             gnu_triple: x86_64-apple-darwin
             os: macosx
-            minos: 10.8
-          - arch: arm64
-            gnu_triple: aarch64-apple-darwin
-            os: macosx
-            minos: 11.0
+            minos: 10.13
+          # - arch: arm64
+          #   gnu_triple: aarch64-apple-darwin
+          #   os: macosx
+          #   minos: 11.0
     runs-on: macos-13
     env:
       LIBIMOBILEDEVICE_COMMIT: ed0d66d0341562731bb19928dfe48155509fa7a7
