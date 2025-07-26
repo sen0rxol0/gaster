@@ -17,10 +17,18 @@ jobs:
             os: macosx
             minos: 11.0
     runs-on: macos-13
+    env:
+      MBEDTLS_VERSION: 3.5.2
+      READLINE_VERSION: 8.2
+      LIBIMOBILEDEVICE_COMMIT: ed0d66d0341562731bb19928dfe48155509fa7a7
+      LIBIRECOVERY_COMMIT: 7ce02c347b7c26e59498e6af31c9da51018d0fa1
+      LIBIMOBILEDEVICE_GLUE_COMMIT: 362f7848ac89b74d9dd113b38b51ecb601f76094
+      LIBPLIST_COMMIT: 2117b8fdb6b4096455bd2041a63e59a028120136
+      LIBUSBMUXD_COMMIT: a7f0543fb1ecb20ac7121c0fd77297200e0e43fc
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -51,10 +59,15 @@ jobs:
           # tar -xf newt-${{ env.NEWT_VERSION }}.tar.gz
           # tar -xf popt-${{ env.POPT_VERSION }}-release.tar.gz
           git clone --depth=1 https://github.com/libimobiledevice/libplist
-          git clone --depth=1 https://github.com/libimobiledevice/libimobiledevice-glue
           git clone --depth=1 https://github.com/libimobiledevice/libirecovery
-          git clone --depth=1 https://github.com/libimobiledevice/libusbmuxd
+          git clone --depth=1 https://github.com/libimobiledevice/libimobiledevice-glue
           git clone --depth=1 https://github.com/libimobiledevice/libimobiledevice
+          git clone --depth=1 https://github.com/libimobiledevice/libusbmuxd
+          cd libplist && git fetch origin ${{ env.LIBPLIST_COMMIT }} && git reset --hard ${{ env.LIBPLIST_COMMIT }} && cd ..
+          cd libirecovery && git fetch origin ${{ env.LIBIRECOVERY_COMMIT }} && git reset --hard ${{ env.LIBIRECOVERY_COMMIT }} && cd ..
+          cd libimobiledevice-glue && git fetch origin ${{ env.LIBIMOBILEDEVICE_GLUE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_GLUE_COMMIT }} && cd ..
+          cd libimobiledevice && git fetch origin ${{ env.LIBIMOBILEDEVICE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_COMMIT }} && cd ..
+          cd libusbmuxd && git fetch origin ${{ env.LIBUSBMUXD_COMMIT }} && git reset --hard ${{ env.LIBUSBMUXD_COMMIT }} && cd ..
 
       - name: Select correct Xcode
         run: |
