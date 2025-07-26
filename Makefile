@@ -1,12 +1,12 @@
 SRC = $(shell pwd)
-LIBS = $(SRC)/libs_root
+LIBS_DIR = $(SRC)/libs_root
 STRIP = strip
 CC ?= cc
-CFLAGS += -I$(LIBS)/include -I$(SRC)/include -I$(SRC)
+CFLAGS += -I$(LIBS_DIR)/include -I$(SRC)/include -I$(SRC)
 CFLAGS += -Wall -Wextra -DGASTERAIN_VERSION=\"2.0.0\" -Wall -Wextra -Wno-unused-parameter
 CFLAGS += -Wno-unused-variable -std=c99 -pedantic-errors -D_C99_SOURCE -D_POSIX_C_SOURCE=200112L -D_DARWIN_C_SOURCE
-LIBS += $(LIBS)/lib/libimobiledevice-1.0.a $(LIBS)/lib/libirecovery-1.0.a $(LIBS)/lib/libusbmuxd-2.0.a
-LIBS += $(LIBS)/lib/libimobiledevice-glue-1.0.a $(LIBS)/lib/libplist-2.0.a -pthread
+LIBS += $(LIBS_DIR)/lib/libimobiledevice-1.0.a $(LIBS_DIR)/lib/libirecovery-1.0.a $(LIBS_DIR)/lib/libusbmuxd-2.0.a
+LIBS += $(LIBS_DIR)/lib/libimobiledevice-glue-1.0.a $(LIBS_DIR)/lib/libplist-2.0.a -pthread
 ifeq ($(TARGET_OS),)
 TARGET_OS = $(shell uname -s)
 endif
