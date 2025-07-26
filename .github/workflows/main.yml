@@ -1,4 +1,4 @@
-name: Build gastera1n
+name: Build gastera1n # Thanks palera1n-c. source: https://raw.githubusercontent.com/palera1n/palera1n-c/refs/heads/master/.github/workflows/build.yml
 
 on:
   workflow_dispatch:
