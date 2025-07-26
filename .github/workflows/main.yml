@@ -88,7 +88,8 @@ jobs:
           wget "https://github.com/tihmstar/libgeneral/releases/download/84/buildroot_macos-latest.zip"
           unzip -u "buildroot_macos-latest.zip"
           rm buildroot_macos-latest.zip
-          sudo cp -r buildroot_macos-latest/* /sysroot/
+          sudo cp -a buildroot_macos-latest/* sysroot/
+          sudo cp -a buildroot_macos-latest/usr/local/* /usr/local
           cd libfragmentzip
           ./autogen.sh --enable-static --disable-shared
           make
