@@ -162,8 +162,8 @@ jobs:
         run: |
           mkdir libs_root
           cp -a sysroot/${{ env.PREFIX }}/{include,lib} libs_root
-          find libs_root -name '*.dylib' -delete
-          find libs_root -name '*.la' -delete
+          #find libs_root -name '*.dylib' -delete
+          #find libs_root -name '*.la' -delete
           gmake -j$(sysctl -n hw.ncpu)
           # mkdir -p ready
           # mv src/palera1n palera1n-${{ matrix.os }}-${{ matrix.arch }}
