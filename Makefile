@@ -28,15 +28,10 @@ LDFLAGS += -static -no-pie -Wl,--gc-sections
 endif
 
 CFLAGS += -Os -g
+CFLAGS += -DBUILD_STYLE="RELEASE" -DBUILD_DATE="\"$(shell LANG=C date)\"" -DBUILD_WHOAMI=\"$(shell whoami)\"
 LIBS += -lc -lz
 
-BUILD_STYLE = RELEASE
-BUILD_DATE := $(shell LANG=C date)
-BUILD_WHOAMI := $(shell whoami)
-
-CFLAGS += -DBUILD_STYLE="\"$(BUILD_STYLE)\"" -DBUILD_DATE="\"$(BUILD_DATE)\"" -DBUILD_WHOAMI=\"$(BUILD_WHOAMI)\"
-
-CSRC=main.c lzfse.c gastera1n.c ideviceenterrecovery.c idevicedfu.c ideviceenterramdisk.c kernel64patcher.c
+SRCC=main.c lzfse.c gastera1n.c ideviceenterrecovery.c idevicedfu.c ideviceenterramdisk.c kernel64patcher.c
 
 all: gastera1n
 
@@ -48,7 +43,7 @@ headers:
 	xxd -iC payload_handle_checkm8_request_armv7.bin payload_handle_checkm8_request_armv7.h
 
 gastera1n: headers
-	$(CC) $(CFLAGS) $(LDFLAGS) $(CSRC) $(LIBS) -o gastera1n
+	$(CC) $(CFLAGS) $(LDFLAGS) $(SRCC) $(LIBS) -o gastera1n
 	$(RM) payload_A9.h payload_notA9.h payload_notA9_armv7.h payload_handle_checkm8_request.h payload_handle_checkm8_request_armv7.h
 
 # libusb: headers
