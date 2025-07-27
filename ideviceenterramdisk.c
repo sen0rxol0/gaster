@@ -34,7 +34,7 @@ static const char *iBSS_img4_path = "/tmp/gastera1n_rdsk/ibss.img4",\
 *kernelcache_img4_path = "/tmp/gastera1n_rdsk/kernelcache.img4";
 
 static const char *ldid2 = "ldid_v2.1.5-procursus7_macosx_x86_64";
-static const char *tsschecker = "tsschecker_macOS_v304";
+static const char *tsschecker = "tsschecker_macOS_v440";
 
 void
 im4m_from_shsh(char *path, char *im4m_path) {

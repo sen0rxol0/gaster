@@ -48,7 +48,6 @@ main(int argc, char **argv) {
 	printf("%s\n", "//\thttps://github.com/dayt0n/restored-external-hax");
 	printf("%s\n", "//\thttps://github.com/xerub/img4lib");
 	printf("%s\n", "//\thttps://github.com/tihmstar/libfragmentzip");
-	printf("%s\n", "//\thttps://github.com/tihmstar/tsschecker");
 	printf("%s\n", "//\thttps://github.com/tihmstar/iBoot64Patcher");
 	printf("%s\n", "//\thttps://github.com/Cryptiiiic/iBoot64Patcher");
 	printf("%s\n", "//\thttps://github.com//Ralph0045/Kernel64Patcher");
@@ -59,6 +58,7 @@ main(int argc, char **argv) {
 	printf("%s\n", "//\thttps://github.com/libimobiledevice/libplist");
 	printf("%s\n", "//\thttps://github.com//ProcursusTeam/ldid");
 	printf("%s\n", "//\thttps://github.com/realnp/ibootim");
+	printf("%s\n", "//\thttps://github.com/1Conan/tsschecker");
 	printf("\n\n");
 
 	DEBUG_ENABLED = false;
