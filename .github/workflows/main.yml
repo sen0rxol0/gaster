@@ -32,7 +32,7 @@ jobs:
 
       - name: Install dependencies (packages)
         run: |
-          brew install make autoconf automake pkg-config gnu-sed gettext
+          brew install make autoconf automake pkg-config gnu-sed
           brew install libzip libtool
           # curl -LO https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_v2.1.5_macosx_x86_64
           # sudo install -m755 ldid_v2.1.5_macosx_x86_64 /usr/local/bin/ldid_v2.1.5
