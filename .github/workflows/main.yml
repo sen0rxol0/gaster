@@ -44,9 +44,6 @@ jobs:
 
       - name: Download dependencies (source code)
         run: |
-          git clone https://github.com/curl/curl.git
-          git clone https://github.com/tihmstar/libgeneral.git
-          git clone https://github.com/tihmstar/libfragmentzip.git
           git clone --depth=1 https://github.com/libimobiledevice/libplist
           git clone --depth=1 https://github.com/libimobiledevice/libirecovery
           git clone --depth=1 https://github.com/libimobiledevice/libimobiledevice-glue
@@ -57,9 +54,11 @@ jobs:
           cd libimobiledevice-glue && git fetch origin ${{ env.LIBIMOBILEDEVICE_GLUE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_GLUE_COMMIT }} && cd ..
           cd libimobiledevice && git fetch origin ${{ env.LIBIMOBILEDEVICE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_COMMIT }} && cd ..
           cd libusbmuxd && git fetch origin ${{ env.LIBUSBMUXD_COMMIT }} && git reset --hard ${{ env.LIBUSBMUXD_COMMIT }} && cd ..
-          curl -LOOOOOO https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${{ env.MBEDTLS_VERSION }}.tar.gz
-          tar -xf v${{ env.MBEDTLS_VERSION }}.tar.gz
-          
+
+          git clone https://github.com/curl/curl.git
+          git clone https://github.com/tihmstar/libgeneral.git
+          git clone https://github.com/tihmstar/libfragmentzip.git
+      
       - name: Select correct Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode_15.2.app
