@@ -9,7 +9,7 @@ CFLAGS += -Os -Weverything -DGASTERAIN_VERSION=\"1.0\"
 # CFLAGS += -Wno-unused-variable -std=c99 -pedantic-errors -D_C99_SOURCE -D_POSIX_C_SOURCE=200112L -D_DARWIN_C_SOURCE
 LIBS += $(LIBS_DIR)/lib/libmbedtls.a $(LIBS_DIR)/lib/libmbedcrypto.a $(LIBS_DIR)/lib/libmbedx509.a $(LIBS_DIR)/lib/libreadline.a
 LIBS += $(LIBS_DIR)/lib/libimobiledevice-1.0.a $(LIBS_DIR)/lib/libirecovery-1.0.a $(LIBS_DIR)/lib/libusbmuxd-2.0.a
-LIBS += $(LIBS_DIR)/lib/libimobiledevice-glue-1.0.a $(LIBS_DIR)/lib/libplist-2.0.a -lcurl -lgeneral -lfragmentzip -pthread
+LIBS += $(LIBS_DIR)/lib/libimobiledevice-glue-1.0.a $(LIBS_DIR)/lib/libplist-2.0.a $(LIBS_DIR)/lib/libgeneral.a -lcurl -lgeneral -lfragmentzip -pthread
 ifeq ($(TARGET_OS),)
 TARGET_OS = $(shell uname -s)
 endif
