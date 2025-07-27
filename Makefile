@@ -15,7 +15,7 @@ endif
 ifeq ($(TARGET_OS),Darwin)
 #CFLAGS += -Wno-nullability-extension
 ifeq (,$(findstring version-min=, $(CFLAGS)))
-CFLAGS += -mmacosx-version-min=10.8
+CFLAGS += -mmacosx-version-min=10.13
 endif
 LDFLAGS += -Wl,-dead_strip
 LIBS += -framework CoreFoundation -framework IOKit
@@ -25,8 +25,8 @@ CFLAGS += -fdata-sections -ffunction-sections
 LDFLAGS += -static -no-pie -Wl,--gc-sections
 endif
 
-#CFLAGS += -Os -g
-#LIBS += -lc
+CFLAGS += -Os -g
+LIBS += -lc
 
 BUILD_STYLE = RELEASE
 BUILD_DATE := $(shell LANG=C date)
