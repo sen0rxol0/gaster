@@ -308,7 +308,7 @@ ideviceenterramdisk_patchimages()
     sprintf(shsh2_path, "%s/latest.shsh2", rdsk_staging_path);
 
     if (access(shsh2_path, F_OK) != 0) {
-        sprintf(cmd, "./%s -e %s -d %s -B %s -s -l --save-path %s; mv %s/*shsh2 %s", tsschecker, ecid, idevicedfu_info("product_type"), idevicedfu_info("model"), rdsk_staging_path, rdsk_staging_path, shsh2_path);
+        sprintf(cmd, "./%s -e %s -d %s -B %s -b -l -s --save-path %s; mv %s/*shsh2 %s", tsschecker, ecid, idevicedfu_info("product_type"), idevicedfu_info("model"), rdsk_staging_path, rdsk_staging_path, shsh2_path);
 
         if (!execute_command(cmd) || !(access(shsh2_path, F_OK) == 0)) {
             return -1;
