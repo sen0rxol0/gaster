@@ -18,7 +18,8 @@ jobs:
           #   minos: 11.0
     runs-on: macos-13
     env:
-      LIBRESSL_VER: 2.2.7
+      MBEDTLS_VERSION: 3.5.2
+      READLINE_VERSION: 8.2
       LIBIMOBILEDEVICE_COMMIT: ed0d66d0341562731bb19928dfe48155509fa7a7
       LIBIRECOVERY_COMMIT: 7ce02c347b7c26e59498e6af31c9da51018d0fa1
       LIBIMOBILEDEVICE_GLUE_COMMIT: 362f7848ac89b74d9dd113b38b51ecb601f76094
@@ -43,7 +44,7 @@ jobs:
           echo "SDK=$(xcrun -sdk ${{ matrix.os }} --show-sdk-path)" >> $GITHUB_ENV
 
       - name: Download dependencies (source code)
-        run: |
+        run: |          
           git clone --depth=1 https://github.com/libimobiledevice/libplist
           git clone --depth=1 https://github.com/libimobiledevice/libirecovery
           git clone --depth=1 https://github.com/libimobiledevice/libimobiledevice-glue
@@ -58,7 +59,14 @@ jobs:
           git clone https://github.com/curl/curl.git
           git clone https://github.com/tihmstar/libgeneral.git
           git clone https://github.com/tihmstar/libfragmentzip.git
-      
+
+          curl -LOOOOOO \
+            https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${{ env.MBEDTLS_VERSION }}.tar.gz \
+            https://mirror-hk.koddos.net/gnu/readline/readline-${{ env.READLINE_VERSION }}.tar.gz
+
+          tar -xf v${{ env.MBEDTLS_VERSION }}.tar.gz
+          tar -xf readline-${{ env.READLINE_VERSION }}.tar.gz
+          
       - name: Select correct Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode_15.2.app
@@ -150,32 +158,43 @@ jobs:
           gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
           cd ..
 
-      - name: Build libimobiledevice
+      - name: Build Mbed TLS
         run: |
-          LIBRESSL_VER=${{ env.LIBRESSL_VER }}
-          FILENAME="libressl-$LIBRESSL_VER.tar.gz"
-          LIBRESSL_DIR=`pwd`/libressl
-          LIBRESSL_LIB=`pwd`/libressl_lib
-          LIBSSL=$LIBRESSL_LIB/libssl.35.tbd
-          LIBCRYPTO=$LIBRESSL_LIB/libcrypto.35.tbd
+          cd mbedtls-${{ env.MBEDTLS_VERSION }}
+          curl -LOOOOOO https://raw.githubusercontent.com/palera1n/palera1n/refs/heads/main/patches/mbedtls/0001-Allow-empty-x509-cert-issuer.patch
+          cat 0001-Allow-empty-x509-cert-issuer.patch | patch -sN -d . -p1
+          mkdir build
+          cd build
+          SDKROOT="${{ env.SDK }}" cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CROSSCOMPILING=true \
+            -DCMAKE_SYSTEM_NAME=Darwin \
+            -DCMAKE_C_COMPILER="${{ env.CC }}" \
+            -DCMAKE_C_FLAGS='${{ env.CFLAGS }}' \
+            -DCMAKE_FIND_ROOT_PATH="${{ env.DESTDIR }}" \
+            -DCMAKE_INSTALL_PREFIX="${{ env.PREFIX }}" \
+            -DMBEDTLS_PYTHON_EXECUTABLE="/usr/local/bin/python3" \
+            -DENABLE_TESTING=OFF \
+            -DENABLE_PROGRAMS=OFF \
+            -DMBEDTLS_FATAL_WARNINGS=OFF \
+            -DCMAKE_INSTALL_SYSCONFDIR="/etc"
+          gmake -j$(sysctl -n hw.ncpu) SDKROOT="${{ env.SDK }}"
+          gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
+          cd ..
 
-          mkdir -p $LIBRESSL_LIB
-          curl -o $LIBRESSL_LIB/libcrypto.35.tbd -Ls \
-              https://gist.github.com/nikias/94c99fd145a75a5104415e5117b0cafa/raw/5209dfbff5a871a14272afe4794e76eb4cf6f062/libcrypto.35.tbd
-          curl -o $LIBRESSL_LIB/libssl.35.tbd -Ls \
-              https://gist.github.com/nikias/94c99fd145a75a5104415e5117b0cafa/raw/5209dfbff5a871a14272afe4794e76eb4cf6f062/libssl.35.tbd
-          curl -o $FILENAME -Ls "https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/$FILENAME"
-
-          mkdir -p $LIBRESSL_DIR
-          tar -C $LIBRESSL_DIR -xzf $FILENAME
-          
+      - name: Build readline
+        run: |
+          cd readline-${{ env.READLINE_VERSION }}
+          CC=clang CXX=clang++ ./configure ${{ env.CONFIGURE_ARGS }} ac_cv_type_sig_atomic_t=no
+          gmake -j$(sysctl -n hw.ncpu)
+          gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+       
+      - name: Build libimobiledevice
+        run: |          
           cd libimobiledevice
-          # autoreconf -fiv
-          # ./configure ${{ env.CONFIGURE_ARGS }} --enable-debug --disable-wireless-pairing
-
-          ./autogen.sh ${{ env.CONFIGURE_ARGS }} --enable-debug --disable-wireless-pairing \
-            openssl_CFLAGS="-I$LIBRESSL_DIR/libressl-$LIBRESSL_VER/include" \
-            openssl_LIBS="-Xlinker $LIBSSL -Xlinker $LIBCRYPTO"
+          autoreconf -fiv
+          ./configure ${{ env.CONFIGURE_ARGS }} --with-mbedtls --enable-debug --disable-wireless-pairing
           echo -e 'all:\ninstall:' > tools/Makefile
           gmake -j$(sysctl -n hw.ncpu)
           gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
@@ -185,9 +204,10 @@ jobs:
         run: |
           mkdir libs_root
           cp -a sysroot/${{ env.PREFIX }}/{include,lib} libs_root
-          #find libs_root -name '*.dylib' -delete
-          #find libs_root -name '*.la' -delete
+          find libs_root -name '*.dylib' -delete
+          find libs_root -name '*.la' -delete
           gmake -j$(sysctl -n hw.ncpu)
+          
           # mkdir -p ready
           # mv src/palera1n palera1n-${{ matrix.os }}-${{ matrix.arch }}
           # dsymutil palera1n-${{ matrix.os }}-${{ matrix.arch }}
