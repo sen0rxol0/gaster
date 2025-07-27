@@ -229,14 +229,10 @@ jobs:
           # fi
 
           if [ "${{ matrix.arch }}" == "arm64" ]; then
-              gzip -d iBoot64Patcher_macOS_arm64.gz
-              mv iBoot64Patcher_macOS_arm64 iBoot64Patcher
+              mv iBoot64Patcher_macOS_arm64.gz iBoot64Patcher.gz
           else
-              gzip -d iBoot64Patcher_macOS_x86_64.gz
-              mv iBoot64Patcher_macOS_x86_64 iBoot64Patcher
+              mv iBoot64Patcher_macOS_x86_64.gz iBoot64Patcher.gz
           fi
-
-          gzip -9 -S .gz iBoot64Patcher
 
           mkdir ${gastera1n}_v1.0
           cd ${gastera1n}_v1.0
