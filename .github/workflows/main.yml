@@ -171,7 +171,7 @@ jobs:
       - name: Build Mbed TLS
         run: |
           cd mbedtls-${{ env.MBEDTLS_VERSION }}
-          curl -LOOOOOO https://raw.githubusercontent.com/palera1n/palera1n/refs/heads/main/patches/mbedtls/0001-Allow-empty-x509-cert-issuer.patch
+          curl -LOOOOOO https://raw.githubusercontent.com/palera1n/palera1n/76b2695e9d78230caa3d733e84ee87f2f458c976/patches/mbedtls/0001-Allow-empty-x509-cert-issuer.patch
           cat 0001-Allow-empty-x509-cert-issuer.patch | patch -sN -d . -p1
           mkdir build
           cd build
