@@ -229,13 +229,12 @@ jobs:
           # fi
          
           mkdir ${gastera1n}_v1.0
-          # cp -a libs_root ${gastera1n}_v1.0/
-          cp LICENCE ${gastera1n}_v1.0/
-          cp restored_external.gz ${gastera1n}_v1.0/
-          cp ssh64* ${gastera1n}_v1.0/
-          cp bootim@750x1334.im4p ${gastera1n}_v1.0/
-          cp tsschecker_macOS_v304.gz ${gastera1n}_v1.0/
-          cp ldid_v2.1.5-procursus7_macosx_x86_64.gz ${gastera1n}_v1.0/
+          cd ${gastera1n}_v1.0
+          # cp -a ../libs_root .
+          cp ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
+          cp ../tsschecker_macOS_v304.gz .
+          cp ../ldid_v2.1.5-procursus7_macosx_x86_64.gz .
+          cd ..
           tar -zcf ${gastera1n}_v1.0.tgz ${gastera1n}_v1.0
 
       - name: Upload ${{ matrix.os }} thin ${{ matrix.arch }} build
