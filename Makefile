@@ -28,7 +28,7 @@ LDFLAGS += -static -no-pie -Wl,--gc-sections
 endif
 
 CFLAGS += -Os -g
-LIBS += -lc
+LIBS += -lc -lz
 
 BUILD_STYLE = RELEASE
 BUILD_DATE := $(shell LANG=C date)
