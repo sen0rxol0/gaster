@@ -46,7 +46,7 @@ jobs:
           echo "SDK=$(xcrun -sdk ${{ matrix.os }} --show-sdk-path)" >> $GITHUB_ENV
 
       - name: Download dependencies (source code)
-        run: |          
+        run: |
           git clone --depth=1 https://github.com/libimobiledevice/libplist
           git clone --depth=1 https://github.com/libimobiledevice/libirecovery
           git clone --depth=1 https://github.com/libimobiledevice/libimobiledevice-glue
@@ -69,7 +69,7 @@ jobs:
 
           tar -xf v${{ env.MBEDTLS_VERSION }}.tar.gz
           tar -xf readline-${{ env.READLINE_VERSION }}.tar.gz
-          
+
       - name: Select correct Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode_15.2.app
@@ -104,7 +104,7 @@ jobs:
       #     gmake -j$(sysctl -n hw.ncpu)
       #     gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
       #     cd ..
-          
+
       - name: Build libfragmentzip
         run: |
           ncpu=${{ env.NCPU }}
@@ -123,7 +123,7 @@ jobs:
           gmake -j$ncpu
           gmake -j$ncpu install DESTDIR=${{ env.DESTDIR }}
           cd ..
-     
+
       - name: Build libplist
         run: |
           cd libplist
@@ -147,11 +147,11 @@ jobs:
           sudo cp -a sysroot/usr/local/* /usr/local
           cd libirecovery
           autoreconf -fiv
-          
+
           # if [ "${{ matrix.os }}" != "macosx" ]; then
           #   gsed -i '/case kIOUSBTransactionTimeout/d' src/libirecovery.c
           # fi
-          
+
           ./configure ${{ env.CONFIGURE_ARGS }}
           echo -e 'all:\ninstall:' > tools/Makefile
           make -j${{ env.NCPU }} LIBS="-lncurses"
@@ -199,9 +199,9 @@ jobs:
           gmake -j${{ env.NCPU }}
           gmake -j${{ env.NCPU }} install DESTDIR=${{ env.DESTDIR }}
           cd ..
-       
+
       - name: Build libimobiledevice
-        run: |          
+        run: |
           cd libimobiledevice
           autoreconf -fiv
           ./configure ${{ env.CONFIGURE_ARGS }} --with-mbedtls --enable-debug --disable-wireless-pairing
@@ -221,17 +221,28 @@ jobs:
           mv gastera1n $gastera1n
           # dsymutil $gastera1n
           strip $gastera1n
-         
+
           # if [ "${{ matrix.os }}" == "macosx" ]; then
             # ldid -S $gastera1n
           # else
             # ldid -Ssrc/usb.xml $gastera1n
           # fi
-         
+
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+              gzip -d iBoot64Patcher_macOS_arm64.gz
+              mv iBoot64Patcher_macOS_arm64 iBoot64Patcher
+          else
+              gzip -d iBoot64Patcher_macOS_x86_64.gz
+              mv iBoot64Patcher_macOS_x86_64 iBoot64Patcher
+          fi
+
+          gzip -9 -S .gz iBoot64Patcher
+
           mkdir ${gastera1n}_v1.0
           cd ${gastera1n}_v1.0
           # cp -a ../libs_root .
           cp ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
+          cp ../iBoot64Patcher.gz .
           cp ../tsschecker_macOS_v304.gz .
           cp ../ldid_v2.1.5-procursus7_macosx_x86_64.gz .
           cp ../$gastera1n .

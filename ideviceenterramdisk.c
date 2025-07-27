@@ -9,15 +9,11 @@
 #include "ideviceloaders.h"
 
 #include "gastera1n.h"
-#include "iBoot64Patcher.h"
 #include "kernel64patcher.h"
 
 #include <plist/plist.h>
 #include <libfragmentzip/libfragmentzip.h>
 
-// xxd -i iBoot64Patcher > iBoot64Patcher.h
-extern unsigned char iBoot64Patcher[];
-extern size_t iBoot64Patcher_len;
 
 static device_loader ipsw_loader;
 static char *ipsw_url;
@@ -333,27 +329,18 @@ ideviceenterramdisk_patchimages()
         return -1;
     }
 
-    if (access("iBoot64Patcher.bin", F_OK) != 0) {
-        FILE *fp;
-        fp = fopen("iBoot64Patcher.bin", "wb");
-
-        if (fp == NULL) {
-            return -1;
-        }
-
-        fwrite(&iBoot64Patcher, 1, iBoot64Patcher_len, fp);
-        fclose(fp);
-
-        execute_command("xattr -d com.apple.quarantine iBoot64Patcher.bin >/dev/null 2>&1; chmod +x iBoot64Patcher.bin;");
+    if (access("iBoot64Patcher.gz", F_OK) == 0) {
+        execute_command("gunzip iBoot64Patcher.gz; xattr -d com.apple.quarantine iBoot64Patcher >/dev/null 2>&1; chmod +x iBoot64Patcher;");
     }
 
-    sprintf(cmd, "./iBoot64Patcher.bin %s.dec %s.pwn -n -b \"rd=md0 -v\"", iBEC_save_path, iBEC_save_path);
+
+    sprintf(cmd, "./iBoot64Patcher %s.dec %s.pwn -n -b \"rd=md0 -v\"", iBEC_save_path, iBEC_save_path);
 
     if(!execute_command(cmd)) {
         return -1;
     }
 
-    sprintf(cmd, "./iBoot64Patcher.bin %s.dec %s.pwn", iBSS_save_path, iBSS_save_path);
+    sprintf(cmd, "./iBoot64Patcher %s.dec %s.pwn", iBSS_save_path, iBSS_save_path);
 
     if(!execute_command(cmd)) {
         return -1;
@@ -371,8 +358,7 @@ ideviceenterramdisk_patchimages()
     }
 
     if (access("restored_external.gz", F_OK) == 0) {
-        sprintf(cmd, "gunzip restored_external.gz");
-        execute_command(cmd);
+        execute_command("gunzip restored_external.gz");
     }
 
     int cmd_list_len = 8;
