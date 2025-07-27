@@ -234,6 +234,7 @@ jobs:
           cp ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
           cp ../tsschecker_macOS_v304.gz .
           cp ../ldid_v2.1.5-procursus7_macosx_x86_64.gz .
+          cp ../$gastera1n .
           cd ..
           tar -zcf ${gastera1n}_v1.0.tgz ${gastera1n}_v1.0
 
