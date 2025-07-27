@@ -174,39 +174,35 @@ ls -la
 
 echo "Build gastera1n"
 
-gastera1n="gastera1n-${{ matrix.os }}-${{ matrix.arch }}"
+gastera1n="gastera1n-$matrix_os-$matrix_arch"
 mkdir libs_root
-cp -a sysroot/${{ env.PREFIX }}/{include,lib} libs_root
+cp -a sysroot/$PREFIX/{include,lib} libs_root
 # find libs_root -name '*.dylib' -delete
 # find libs_root -name '*.la' -delete
-gmake -j${{ env.NCPU }}
+gmake -j$NCPU
 mv gastera1n $gastera1n
 # dsymutil $gastera1n
 strip $gastera1n
 
-# if [ "${{ matrix.os }}" == "macosx" ]; then
+# if [ "$matrix_os" == "macosx" ]; then
   # ldid -S $gastera1n
 # else
   # ldid -Ssrc/usb.xml $gastera1n
 # fi
 
-if [ "${{ matrix.arch }}" == "arm64" ]; then
-    gzip -d iBoot64Patcher_macOS_arm64.gz
-    mv iBoot64Patcher_macOS_arm64 iBoot64Patcher
+if [ "$matrix_arch" == "arm64" ]; then
+    mv iBoot64Patcher_macOS_arm64.gz iBoot64Patcher.gz
+    mv ldid_v2.1.5-procursus7_macosx_arm64.gz ldid2.gz
 else
-    gzip -d iBoot64Patcher_macOS_x86_64.gz
-    mv iBoot64Patcher_macOS_x86_64 iBoot64Patcher
+    mv iBoot64Patcher_macOS_x86_64.gz iBoot64Patcher.gz
+    mv ldid_v2.1.5-procursus7_macosx_x86_64.gz ldid2.gz
 fi
-
-gzip -9 -S .gz iBoot64Patcher
 
 mkdir ${gastera1n}_v1.0
 cd ${gastera1n}_v1.0
 # cp -a ../libs_root .
 cp ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
-cp ../iBoot64Patcher.gz .
-cp ../tsschecker_macOS_v304.gz .
-cp ../ldid_v2.1.5-procursus7_macosx_x86_64.gz .
+cp ../iBoot64Patcher.gz ../tsschecker_macOS_v440.gz ../ldid2.gz .
 cp ../$gastera1n .
 cd ..
 tar -zcf ${gastera1n}_v1.0.tgz ${gastera1n}_v1.0
