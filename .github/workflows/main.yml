@@ -206,7 +206,7 @@ jobs:
         run: |
           mkdir libs_root
           cp -a sysroot/${{ env.PREFIX }}/{include,lib} libs_root
-          find libs_root -name '*.dylib' -delete
+          # find libs_root -name '*.dylib' -delete
           find libs_root -name '*.la' -delete
           gmake -j$(sysctl -n hw.ncpu)
           
