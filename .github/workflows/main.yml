@@ -37,7 +37,7 @@ jobs:
       - name: Install dependencies (packages)
         run: |
           brew install make autoconf automake pkg-config gnu-sed
-          brew install zlib libzip libtool
+          brew install libzip libtool
           # curl -LO https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_v2.1.5_macosx_x86_64
           # sudo install -m755 ldid_v2.1.5_macosx_x86_64 /usr/local/bin/ldid_v2.1.5
 
@@ -59,6 +59,7 @@ jobs:
           cd libusbmuxd && git fetch origin ${{ env.LIBUSBMUXD_COMMIT }} && git reset --hard ${{ env.LIBUSBMUXD_COMMIT }} && cd ..
 
           # git clone https://github.com/curl/curl.git
+          git clone https://github.com/madler/zlib.git
           git clone https://github.com/tihmstar/libgeneral.git
           git clone https://github.com/tihmstar/libfragmentzip.git
 
@@ -105,6 +106,12 @@ jobs:
           
       - name: Build libfragmentzip
         run: |
+          cd zlib
+          autoreconf -fiv
+          ./configure ${{ env.CONFIGURE_ARGS }}
+          gmake -j$(sysctl -n hw.ncpu)
+          gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
+          cd ..
           cd libgeneral
           autoreconf -fiv
           ./configure ${{ env.CONFIGURE_ARGS }}
