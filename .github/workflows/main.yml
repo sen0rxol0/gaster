@@ -18,6 +18,7 @@ jobs:
           #   minos: 11.0
     runs-on: macos-13
     env:
+      LIBRESSL_VER: 2.2.7
       LIBIMOBILEDEVICE_COMMIT: ed0d66d0341562731bb19928dfe48155509fa7a7
       LIBIRECOVERY_COMMIT: 7ce02c347b7c26e59498e6af31c9da51018d0fa1
       LIBIMOBILEDEVICE_GLUE_COMMIT: 362f7848ac89b74d9dd113b38b51ecb601f76094
@@ -56,7 +57,9 @@ jobs:
           cd libimobiledevice-glue && git fetch origin ${{ env.LIBIMOBILEDEVICE_GLUE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_GLUE_COMMIT }} && cd ..
           cd libimobiledevice && git fetch origin ${{ env.LIBIMOBILEDEVICE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_COMMIT }} && cd ..
           cd libusbmuxd && git fetch origin ${{ env.LIBUSBMUXD_COMMIT }} && git reset --hard ${{ env.LIBUSBMUXD_COMMIT }} && cd ..
-
+          curl -LOOOOOO https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${{ env.MBEDTLS_VERSION }}.tar.gz
+          tar -xf v${{ env.MBEDTLS_VERSION }}.tar.gz
+          
       - name: Select correct Xcode
         run: |
           sudo xcode-select -s /Applications/Xcode_15.2.app
@@ -90,7 +93,7 @@ jobs:
       #     gmake -j$(sysctl -n hw.ncpu)
       #     gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
       #     cd ..
-        
+          
       - name: Build libfragmentzip
         run: |
           cd libgeneral
@@ -105,7 +108,7 @@ jobs:
           gmake -j$(sysctl -n hw.ncpu)
           gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
           cd ..
-
+     
       - name: Build libplist
         run: |
           cd libplist
@@ -150,9 +153,30 @@ jobs:
 
       - name: Build libimobiledevice
         run: |
+          LIBRESSL_VER=${{ env.LIBRESSL_VER }}
+          FILENAME="libressl-$LIBRESSL_VER.tar.gz"
+          LIBRESSL_DIR=`pwd`/libressl
+          LIBRESSL_LIB=`pwd`/libressl_lib
+          LIBSSL=$LIBRESSL_LIB/libssl.35.tbd
+          LIBCRYPTO=$LIBRESSL_LIB/libcrypto.35.tbd
+
+          mkdir -p $LIBRESSL_LIB
+          curl -o $LIBRESSL_LIB/libcrypto.35.tbd -Ls \
+              https://gist.github.com/nikias/94c99fd145a75a5104415e5117b0cafa/raw/5209dfbff5a871a14272afe4794e76eb4cf6f062/libcrypto.35.tbd
+          curl -o $LIBRESSL_LIB/libssl.35.tbd -Ls \
+              https://gist.github.com/nikias/94c99fd145a75a5104415e5117b0cafa/raw/5209dfbff5a871a14272afe4794e76eb4cf6f062/libssl.35.tbd
+          curl -o $FILENAME -Ls "https://ftp.openbsd.org/pub/OpenBSD/LibreSSL/$FILENAME"
+
+          mkdir -p $LIBRESSL_DIR
+          tar -C $LIBRESSL_DIR -xzf $FILENAME
+          
           cd libimobiledevice
-          autoreconf -fiv
-          ./configure ${{ env.CONFIGURE_ARGS }} --enable-debug
+          # autoreconf -fiv
+          # ./configure ${{ env.CONFIGURE_ARGS }} --enable-debug --disable-wireless-pairing
+
+          ./autogent.sh ${{ env.CONFIGURE_ARGS }} --enable-debug --disable-wireless-pairing \
+            openssl_CFLAGS="-I$LIBRESSL_DIR/libressl-$LIBRESSL_VER/include" \
+            openssl_LIBS="-Xlinker $LIBSSL -Xlinker $LIBCRYPTO"
           echo -e 'all:\ninstall:' > tools/Makefile
           gmake -j$(sysctl -n hw.ncpu)
           gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
