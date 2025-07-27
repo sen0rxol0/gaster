@@ -1,4 +1,6 @@
-name: Build gastera1n # Thanks palera1n-c. source: https://raw.githubusercontent.com/palera1n/palera1n-c/refs/heads/master/.github/workflows/build.yml
+name: Build gastera1n
+# Thanks palera1n-c. source: https://raw.githubusercontent.com/palera1n/palera1n-c/refs/heads/master/.github/workflows/build.yml
+# https://raw.githubusercontent.com/palera1n/palera1n/67805496f3395a086cd7782da6c59214e648ba2e/.github/workflows/build.yml
 
 on:
   workflow_dispatch:
@@ -56,7 +58,7 @@ jobs:
           cd libimobiledevice && git fetch origin ${{ env.LIBIMOBILEDEVICE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_COMMIT }} && cd ..
           cd libusbmuxd && git fetch origin ${{ env.LIBUSBMUXD_COMMIT }} && git reset --hard ${{ env.LIBUSBMUXD_COMMIT }} && cd ..
 
-          git clone https://github.com/curl/curl.git
+          # git clone https://github.com/curl/curl.git
           git clone https://github.com/tihmstar/libgeneral.git
           git clone https://github.com/tihmstar/libfragmentzip.git
 
