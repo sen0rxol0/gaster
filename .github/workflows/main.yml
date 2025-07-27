@@ -228,34 +228,19 @@ jobs:
             # ldid -Ssrc/usb.xml $gastera1n
           # fi
          
-          mkdir -p ready
-          tar -zcf ready/libs_root-${{ matrix.os }}-${{ matrix.arch }}.tgz libs_root
+          mkdir ${gastera1n}_v1.0
+          # cp -a libs_root ${gastera1n}_v1.0/
+          cp restored_external.gz ${gastera1n}_v1.0/ 
+          cp tsschecker_macOS_v304.gz ${gastera1n}_v1.0/ 
+          cp ssh64* ${gastera1n}_v1.0/ 
+          cp ldid_v2.1.5-procursus7_macosx_x86_64.gz ${gastera1n}_v1.0/
+          cp bootim@750x1334.im4p ${gastera1n}_v1.0/
+          cp LICENCE ${gastera1n}_v1.0/
+          tar -zcf ${gastera1n}_v1.0.tgz ${gastera1n}_v1.0
 
       - name: Upload ${{ matrix.os }} thin ${{ matrix.arch }} build
         uses: actions/upload-artifact@v4
         with:
-          name: gastera1n-${{ matrix.os }}-${{ matrix.arch }}
-          path: gastera1n-${{ matrix.os }}-${{ matrix.arch }}
+          name: gastera1n-${{ matrix.os }}-${{ matrix.arch }}_v1.0.tgz
+          path: gastera1n-${{ matrix.os }}-${{ matrix.arch }}_v1.0.tgz
           retention-days: 1
-
-  # darwin-dist:
-  #   runs-on: macos-latest
-  #   needs: build-darwin
-  #   steps:
-  #     - name: Download all Darwin artifacts
-  #       uses: actions/download-artifact@v3
-
-  #     - name: Prepare artifact
-  #       run: |
-  #         find .
-  #         # mkdir -p gastera1n-macos.dSYM/Contents/Resources/DWARF
-  #         # cp ./gastera1n-macosx-x86_64.dSYM/Contents/Info.plist gastera1n-macos.dSYM/Contents
-  #         # lipo -create -arch arm64 gastera1n-macosx-arm64.dSYM/Contents/Resources/DWARF/gastera1n-macosx-arm64 -arch x86_64 gastera1n-macosx-x86_64.dSYM/Contents/Resources/DWARF/gastera1n-macosx-x86_64 -output gastera1n-macos.dSYM/Contents/Resources/DWARF/gastera1n-macos
-  #         # lipo -create -arch arm64 ./gastera1n-macosx-arm64/gastera1n-macosx-arm64 -arch x86_64 ./gastera1n-macosx-x86_64/gastera1n-macosx-x86_64 -output gastera1n-macos
-  #         mkdir ready
-  #         cp ./gastera1n-macosx-x86_64/gastera1n-macosx-x86_64 ready/gastera1n-macos-x86_64
-  #         # cp ./gastera1n-macosx-arm64/gastera1n-macosx-arm64 ready/gastera1n-macos-arm64
-  #         # cp gastera1n-macos ready/gastera1n-macos-universal
-  #         # cp ./gastera1n-iphoneos-arm64/gastera1n-iphoneos-arm64 ready/gastera1n-ios
-  #         # zip -r9 ready/gastera1n-ios.dSYM.zip gastera1n-iphoneos-arm64.dSYM
-  #         # zip -r9 ready/gastera1n-macos.dSYM.zip gastera1n-macos.dSYM
