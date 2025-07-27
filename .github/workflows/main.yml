@@ -82,6 +82,15 @@ jobs:
           mkdir -p $(pwd)/sysroot/usr/local/lib
           ln -sf $(pwd)/sysroot/usr/local/lib{,64}
 
+      - name: Build curl
+        run: |
+          cd curl
+          autoreconf -fiv
+          ./configure ${{ env.CONFIGURE_ARGS }} --with-openssl
+          gmake -j$(sysctl -n hw.ncpu)
+          gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+        
       - name: Build libfragmentzip
         run: |
           cd libgeneral
