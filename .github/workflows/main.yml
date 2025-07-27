@@ -14,10 +14,10 @@ jobs:
             gnu_triple: x86_64-apple-darwin
             os: macosx
             minos: 10.13
-          # - arch: arm64
-          #   gnu_triple: aarch64-apple-darwin
-          #   os: macosx
-          #   minos: 11.0
+          - arch: arm64
+            gnu_triple: aarch64-apple-darwin
+            os: macosx
+            minos: 11.0
     runs-on: macos-13
     env:
       MBEDTLS_VERSION: 3.5.2
