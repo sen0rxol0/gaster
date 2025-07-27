@@ -230,17 +230,17 @@ jobs:
 
           if [ "${{ matrix.arch }}" == "arm64" ]; then
               mv iBoot64Patcher_macOS_arm64.gz iBoot64Patcher.gz
+              mv ldid_v2.1.5-procursus7_macosx_arm64.gz ldid2.gz
           else
               mv iBoot64Patcher_macOS_x86_64.gz iBoot64Patcher.gz
+              mv ldid_v2.1.5-procursus7_macosx_x86_64.gz ldid2.gz
           fi
 
           mkdir ${gastera1n}_v1.0
           cd ${gastera1n}_v1.0
           # cp -a ../libs_root .
           cp ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
-          cp ../iBoot64Patcher.gz .
-          cp ../tsschecker_macOS_v304.gz .
-          cp ../ldid_v2.1.5-procursus7_macosx_x86_64.gz .
+          cp ../iBoot64Patcher.gz ../tsschecker_macOS_v440.gz ../ldid2.gz .
           cp ../$gastera1n .
           cd ..
           tar -zcf ${gastera1n}_v1.0.tgz ${gastera1n}_v1.0
