@@ -10,7 +10,7 @@ CFLAGS += -Os -Weverything -DGASTERAIN_VERSION=\"1.0\"
 LIBS += $(LIBS_DIR)/lib/libmbedtls.a $(LIBS_DIR)/lib/libmbedcrypto.a $(LIBS_DIR)/lib/libmbedx509.a $(LIBS_DIR)/lib/libreadline.a
 LIBS += $(LIBS_DIR)/lib/libusbmuxd-2.0.a $(LIBS_DIR)/lib/libplist-2.0.a $(LIBS_DIR)/lib/libirecovery-1.0.a
 LIBS += $(LIBS_DIR)/lib/libimobiledevice-glue-1.0.a $(LIBS_DIR)/lib/libimobiledevice-1.0.a
-LIBS += $(LIBS_DIR)/lib/libgeneral.a $(LIBS_DIR)/lib/libfragmentzip.a -lcurl -pthread
+LIBS += $(LIBS_DIR)/lib/libgeneral.a $(LIBS_DIR)/lib/libfragmentzip.a -lcurl -lpthread
 ifeq ($(TARGET_OS),)
 TARGET_OS = $(shell uname -s)
 endif
