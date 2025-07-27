@@ -33,7 +33,7 @@ jobs:
       - name: Install dependencies (packages)
         run: |
           brew install make autoconf automake pkg-config gnu-sed gettext
-          brew install curl libzip libtool
+          brew install libzip libtool
           # curl -LO https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_v2.1.5_macosx_x86_64
           # sudo install -m755 ldid_v2.1.5_macosx_x86_64 /usr/local/bin/ldid_v2.1.5
 
@@ -43,6 +43,8 @@ jobs:
 
       - name: Download dependencies (source code)
         run: |
+          git clone https://github.com/curl/curl.git
+          git clone https://github.com/tihmstar/libgeneral.git
           git clone https://github.com/tihmstar/libfragmentzip.git
           git clone --depth=1 https://github.com/libimobiledevice/libplist
           git clone --depth=1 https://github.com/libimobiledevice/libirecovery
@@ -82,12 +84,13 @@ jobs:
 
       - name: Build libfragmentzip
         run: |
-          # mkdir buildroot_macos-latest
-          # wget "https://github.com/tihmstar/libgeneral/releases/download/84/buildroot_macos-latest.zip"
-          # unzip -u "buildroot_macos-latest.zip"
-          # rm buildroot_macos-latest.zip
-          # # sudo cp -a buildroot_macos-latest/* sysroot/
-          # sudo cp -a buildroot_macos-latest/usr/local/* ${{ env.DESTDIR }}${{ env.PREFIX }}
+          cd libgeneral
+          ./autogen.sh ${{ env.CONFIGURE_ARGS }}
+          # make
+          # make DESTDIR=${{ env.DESTDIR }} install
+          gmake -j$(sysctl -n hw.ncpu)
+          gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
+          cd ..
           cd libfragmentzip
           ./autogen.sh ${{ env.CONFIGURE_ARGS }}
           gmake -j$(sysctl -n hw.ncpu)
