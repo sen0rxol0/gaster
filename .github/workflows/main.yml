@@ -173,7 +173,7 @@ jobs:
           # autoreconf -fiv
           # ./configure ${{ env.CONFIGURE_ARGS }} --enable-debug --disable-wireless-pairing
 
-          ./autogent.sh ${{ env.CONFIGURE_ARGS }} --enable-debug --disable-wireless-pairing \
+          ./autogen.sh ${{ env.CONFIGURE_ARGS }} --enable-debug --disable-wireless-pairing \
             openssl_CFLAGS="-I$LIBRESSL_DIR/libressl-$LIBRESSL_VER/include" \
             openssl_LIBS="-Xlinker $LIBSSL -Xlinker $LIBCRYPTO"
           echo -e 'all:\ninstall:' > tools/Makefile
