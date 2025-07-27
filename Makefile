@@ -6,6 +6,7 @@ CFLAGS += -I$(LIBS_DIR)/include
 # CFLAGS += -I$(LIBS_DIR)/include -I$(SRC)/include -I$(SRC)
 # CFLAGS += -Os -Weverything -DGASTERAIN_VERSION=\"1.0\"
 CFLAGS += -Wall -Wextra -Wno-unused-parameter -DGASTERAIN_VERSION=\"1.0.0\"
+CFLAGS += -std=c99 -D_C99_SOURCE -D_POSIX_C_SOURCE=200112L -D_DARWIN_C_SOURCE
 # CFLAGS += -Wno-unused-variable -std=c99 -pedantic-errors -D_C99_SOURCE -D_POSIX_C_SOURCE=200112L -D_DARWIN_C_SOURCE
 LIBS += $(LIBS_DIR)/lib/libimobiledevice-1.0.a $(LIBS_DIR)/lib/libirecovery-1.0.a $(LIBS_DIR)/lib/libusbmuxd-2.0.a
 LIBS += $(LIBS_DIR)/lib/libimobiledevice-glue-1.0.a $(LIBS_DIR)/lib/libplist-2.0.a -pthread
