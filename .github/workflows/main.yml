@@ -58,14 +58,14 @@ jobs:
           cd libimobiledevice && git fetch origin ${{ env.LIBIMOBILEDEVICE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_COMMIT }} && cd ..
           cd libusbmuxd && git fetch origin ${{ env.LIBUSBMUXD_COMMIT }} && git reset --hard ${{ env.LIBUSBMUXD_COMMIT }} && cd ..
 
-          # git clone https://github.com/curl/curl.git
-          git clone https://github.com/madler/zlib.git
-          git clone https://github.com/tihmstar/libgeneral.git
-          git clone https://github.com/tihmstar/libfragmentzip.git
+          # git clone https://github.com/curl/curl
+          git clone https://github.com/madler/zlib
+          git clone https://github.com/tihmstar/libgeneral
+          git clone https://github.com/tihmstar/libfragmentzip
 
           curl -LOOOOOO \
-            https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${{ env.MBEDTLS_VERSION }}.tar.gz \
-            https://mirror-hk.koddos.net/gnu/readline/readline-${{ env.READLINE_VERSION }}.tar.gz
+            "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${{ env.MBEDTLS_VERSION }}.tar.gz" \
+            "https://mirror-hk.koddos.net/gnu/readline/readline-${{ env.READLINE_VERSION }}.tar.gz"
 
           tar -xf v${{ env.MBEDTLS_VERSION }}.tar.gz
           tar -xf readline-${{ env.READLINE_VERSION }}.tar.gz
@@ -76,6 +76,7 @@ jobs:
 
       - name: Setup environment
         run: |
+          echo "OUTPUT=gastera1n-${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
           echo "NCPU=$(sysctl -n hw.ncpu)" >> $GITHUB_ENV
           echo "DESTDIR=$(pwd)/sysroot" >> $GITHUB_ENV
           echo "PREFIX=/usr/local" >> $GITHUB_ENV
@@ -171,7 +172,7 @@ jobs:
       - name: Build Mbed TLS
         run: |
           cd mbedtls-${{ env.MBEDTLS_VERSION }}
-          curl -LOOOOOO https://raw.githubusercontent.com/palera1n/palera1n/76b2695e9d78230caa3d733e84ee87f2f458c976/patches/mbedtls/0001-Allow-empty-x509-cert-issuer.patch
+          curl -LOOOOOO "https://raw.githubusercontent.com/palera1n/palera1n/76b2695e9d78230caa3d733e84ee87f2f458c976/patches/mbedtls/0001-Allow-empty-x509-cert-issuer.patch"
           cat 0001-Allow-empty-x509-cert-issuer.patch | patch -sN -d . -p1
           mkdir build
           cd build
@@ -212,7 +213,7 @@ jobs:
 
       - name: Build gastera1n
         run: |
-          gastera1n="gastera1n-${{ matrix.os }}-${{ matrix.arch }}"
+          gastera1n="${{ env.OUTPUT }}"
           mkdir libs_root
           cp -a sysroot/${{ env.PREFIX }}/{include,lib} libs_root
           # find libs_root -name '*.dylib' -delete
@@ -228,22 +229,30 @@ jobs:
             # ldid -Ssrc/usb.xml $gastera1n
           # fi
 
+      - name: Prepare build for upload
+        run: |
           if [ "${{ matrix.arch }}" == "arm64" ]; then
-              mv iBoot64Patcher_macOS_arm64.gz iBoot64Patcher.gz
-              mv ldid_v2.1.5-procursus7_macosx_arm64.gz ldid2.gz
+            mv iBoot64Patcher_macOS_arm64.gz iBoot64Patcher.gz
+            mv ldid_v2.1.5-procursus7_macosx_arm64.gz ldid2.gz
           else
-              mv iBoot64Patcher_macOS_x86_64.gz iBoot64Patcher.gz
-              mv ldid_v2.1.5-procursus7_macosx_x86_64.gz ldid2.gz
+            mv iBoot64Patcher_macOS_x86_64.gz iBoot64Patcher.gz
+            mv ldid_v2.1.5-procursus7_macosx_x86_64.gz ldid2.gz
           fi
 
-          mkdir ${gastera1n}_v1.0
-          cd ${gastera1n}_v1.0
+          curl -LOOOOOO "https://github.com/xerub/img4lib/releases/download/1.0/img4lib-2020-10-27.tar.gz"
+          tar -xzf img4lib-2020-10-27.tar.gz
+          mv img4lib-2020-10-27/apple/img4 .
+          rm -rf img4lib-2020-10-27 img4lib-2020-10-27.tar.gz
+          gzip -9 -S .gz img4
+
+          mkdir ${{ env.OUTPUT }}_v1.0
+          cd ${{ env.OUTPUT }}_v1.0
           # cp -a ../libs_root .
-          cp ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
-          cp ../iBoot64Patcher.gz ../tsschecker_macOS_v440.gz ../ldid2.gz .
-          cp ../$gastera1n .
+          cp -v ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
+          cp -v ../img4.gz ../ldid2.gz ../iBoot64Patcher.gz ../tsschecker_macOS_v440.gz  .
+          cp -v ../${{ env.OUTPUT }} ./gastera1n
           cd ..
-          tar -zcf ${gastera1n}_v1.0.tgz ${gastera1n}_v1.0
+          tar -zcf ${{ env.OUTPUT }}_v1.0.tgz ${{ env.OUTPUT }}_v1.0
 
       - name: Upload ${{ matrix.os }} thin ${{ matrix.arch }} build
         uses: actions/upload-artifact@v4

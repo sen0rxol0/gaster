@@ -255,11 +255,10 @@ ideviceenterramdisk_downloadimages() {
 
 static int
 ideviceenterramdisk_decryptimages() {
-	log_info("Decrypting downloaded images...");
-
-    char *dec_list[] = { kernelcache_save_path, trustcache_save_path, ramdisk_save_path, devicetree_save_path, NULL };
+  log_info("Decrypting downloaded images...");
+  char *dec_list[] = { kernelcache_save_path, trustcache_save_path, ramdisk_save_path, devicetree_save_path, NULL };
 	char *cmd[CHAR_MAX];
-    int ret = 0,
+  int ret = 0,
     i = 0;
 
     while(dec_list[i] != NULL) {
@@ -457,7 +456,7 @@ ideviceenterramdisk_bootrd() {
 
     if (ret == 0) {
         ret = idevicedfu_sendfile(bootim_img4_path);
-        idevicedfu_sendcommand("setpicture 0");
+        idevicedfu_sendcommand("setpicture 0x1");
         idevicedfu_sendcommand("bgcolor 255 55 55");
     }
 
@@ -500,6 +499,12 @@ ideviceenterramdisk_load() {
 	}
 
     if (ret == 0) {
+
+        if (access("img4.gz", F_OK) == 0) {
+            execute_command("gunzip img4.gz; xattr -d com.apple.quarantine img4 >/dev/null 2>&1; chmod +x img4");
+            execute_command("mv img4 /usr/local/bin/img4");
+        }
+
         ret = ideviceenterramdisk_decryptimages();
         sleep(3);
     }
