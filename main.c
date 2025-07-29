@@ -1,3 +1,9 @@
+//
+//  main.c
+//  gastera1n
+//
+//
+
 #include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -34,6 +40,7 @@ idevicepwn_ramdisk() {
 
 int
 main(int argc, char **argv) {
+
 #ifdef __APPLE__
 	system("killall -9 iTunesHelper 2> /dev/null");
 	system("killall -9 iTunes 2> /dev/null");
@@ -70,14 +77,14 @@ main(int argc, char **argv) {
 			case 'h':
 				printf("%s\n", "Optional arguments:\n\
 					\t-d Enable debug\n\
-					\t-p Enter pwned DFU\n");
+					\t-p Run gaster\n");
 				return 0;
 			case 'd':
 				log_warn("%s\n", "Debug is enabled!");
 				DEBUG_ENABLED = true;
 				break;
 			case 'p':
-				log_warn("%s\n", "Only entering pwned DFU mode!");
+				log_warn("%s\n", "Running gaster, entering pwned DFU mode!");
 				pwnDFU = 1;
 				break;
 			default:
