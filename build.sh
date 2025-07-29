@@ -191,18 +191,24 @@ strip $gastera1n
 # fi
 
 if [ "$matrix_arch" == "arm64" ]; then
-    mv iBoot64Patcher_macOS_arm64.gz iBoot64Patcher.gz
-    mv ldid_v2.1.5-procursus7_macosx_arm64.gz ldid2.gz
+  mv iBoot64Patcher_macOS_arm64.gz iBoot64Patcher.gz
+  mv ldid_v2.1.5-procursus7_macosx_arm64.gz ldid2.gz
 else
-    mv iBoot64Patcher_macOS_x86_64.gz iBoot64Patcher.gz
-    mv ldid_v2.1.5-procursus7_macosx_x86_64.gz ldid2.gz
+  mv iBoot64Patcher_macOS_x86_64.gz iBoot64Patcher.gz
+  mv ldid_v2.1.5-procursus7_macosx_x86_64.gz ldid2.gz
 fi
+
+curl -LOOOOOO "https://github.com/xerub/img4lib/releases/download/1.0/img4lib-2020-10-27.tar.gz"
+tar -xzf img4lib-2020-10-27.tar.gz
+mv img4lib-2020-10-27/apple/img4 .
+rm -rf img4lib-2020-10-27 img4lib-2020-10-27.tar.gz
+gzip -9 -S .gz img4
 
 mkdir ${gastera1n}_v1.0
 cd ${gastera1n}_v1.0
 # cp -a ../libs_root .
-cp ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
-cp ../iBoot64Patcher.gz ../tsschecker_macOS_v440.gz ../ldid2.gz .
-cp ../$gastera1n .
+cp -v ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
+cp -v ../img4.gz ../ldid2.gz ../iBoot64Patcher.gz ../tsschecker_macOS_v440.gz  .
+cp -v ../${gastera1n} ./gastera1n
 cd ..
 tar -zcf ${gastera1n}_v1.0.tgz ${gastera1n}_v1.0
