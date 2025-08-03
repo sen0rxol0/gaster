@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 
 #include "log.h"
+#include "ideviceenterramdisk.h"
 #include "idevicedfu.h"
 #include "ideviceloaders.h"
 
@@ -13,7 +14,6 @@
 
 #include <plist/plist.h>
 #include <libfragmentzip/libfragmentzip.h>
-
 
 static device_loader ipsw_loader;
 static char *ipsw_url;
