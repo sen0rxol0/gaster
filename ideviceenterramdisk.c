@@ -378,11 +378,8 @@ ideviceenterramdisk_patchimages()
     strcpy(commands[5], cmd);
 
     sprintf(cmd, "cp ./restored_external ./restored_external_hax;\
-        ./%s -e %s/usr/local/bin/restored_external > ./restored_external_ent.plist;\
-        plutil -insert 'platform-application' -bool \"true\" ./restored_external_ent.plist;\
-        ./%s -M -Srestored_external_ent.plist ./restored_external_hax;\
-        rm ./restored_external_ent.plist;\
-        mv ./restored_external_hax %s/usr/local/bin/restored_external;", ldid2, rdsk_mount_path, ldid2, rdsk_mount_path);
+        mv ./restored_external_hax %s/usr/local/bin/restored_external;", rdsk_mount_path);
+
     strcpy(commands[6], cmd);
     sprintf(cmd, "hdiutil detach -force %s; sleep 5; hdiutil resize -sectors min %s/rdsk.dmg; sleep 3;", rdsk_mount_path, rdsk_staging_path);
     strcpy(commands[7], cmd);
