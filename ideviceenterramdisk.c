@@ -378,7 +378,11 @@ ideviceenterramdisk_patchimages()
     strcpy(commands[4], cmd);
     sprintf(cmd, "cd %s; rm -rf ./sshd ./usr/local/standalone/firmware/* ./usr/share/progressui ./usr/share/terminfo ./etc/apt/ ./etc/dpkg", rdsk_mount_path);
     strcpy(commands[5], cmd);
+
     sprintf(cmd, "cp ./restored_external ./restored_external_hax;\
+        mv ./restored_external_hax %s/usr/local/bin/restored_external;", rdsk_mount_path);
+
+    // sprintf(cmd, "cp ./restored_external ./restored_external_hax;\
         ./%s -e %s/usr/local/bin/restored_external > ./restored_external_ent.plist;\
         plutil -insert 'platform-application' -bool \"true\" ./restored_external_ent.plist;\
         ./%s -Srestored_external_ent.plist ./restored_external_hax;\
