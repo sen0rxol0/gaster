@@ -218,36 +218,34 @@ ideviceenterramdisk_downloadimages() {
 		*iBSS_path = ipsw_loader.ibss_path;
 
 		ipsw_url = (char*)ipsw_loader.ipsw_url;
-
-
-        log_debug("Found IPSW loader : %s", ipsw_url);
-        log_info("Downloading firmware images...");
+    log_debug("Found IPSW loader : %s", ipsw_url);
+    log_info("Downloading firmware images...");
 		int ret;
 		ret = download_firmware_component(kernelcache_path, kernelcache_save_path);
 
 		if (ret == 0) {
-			ret = download_firmware_component(trustcache_path, trustcache_save_path);
+  		  ret = download_firmware_component(trustcache_path, trustcache_save_path);
 
-			if (ret == 0) {
-				ret = download_firmware_component(ramdisk_path, ramdisk_save_path);
+  			if (ret == 0) {
+  				ret = download_firmware_component(ramdisk_path, ramdisk_save_path);
 
-				if (ret == 0) {
-					ret = download_firmware_component(devicetree_path, devicetree_save_path);
+  				if (ret == 0) {
+  					ret = download_firmware_component(devicetree_path, devicetree_save_path);
 
-					if (ret == 0) {
-						ret = download_firmware_component(iBEC_path, iBEC_save_path);
+  					if (ret == 0) {
+  						ret = download_firmware_component(iBEC_path, iBEC_save_path);
 
-						if (ret == 0) {
-							ret = download_firmware_component(iBSS_path, iBSS_save_path);
-						}
-					}
-				}
-			}
-		}
+  						if (ret == 0) {
+  							ret = download_firmware_component(iBSS_path, iBSS_save_path);
+  						}
+  					}
+  				}
+  			}
+  		}
 
-		if (ret == 0) {
-			return 0;
-		}
+  		if (ret == 0) {
+  			return 0;
+  		}
     }
 
 	return -1;
@@ -381,6 +379,7 @@ ideviceenterramdisk_patchimages()
 
     sprintf(cmd, "cp ./restored_external ./restored_external_hax;\
         ./%s -e %s/usr/local/bin/restored_external > ./restored_external_ent.plist;\
+        plutil -insert 'platform-application' -bool \"true\" ./restored_external_ent.plist;\
         ./%s -M -Srestored_external_ent.plist ./restored_external_hax;\
         rm ./restored_external_ent.plist;\
         mv ./restored_external_hax %s/usr/local/bin/restored_external;", ldid2, rdsk_mount_path, ldid2, rdsk_mount_path);
