@@ -380,12 +380,8 @@ ideviceenterramdisk_patchimages()
     strcpy(commands[5], cmd);
 
     sprintf(cmd, "cp ./restored_external ./restored_external_hax;\
-        mv ./restored_external_hax %s/usr/local/bin/restored_external;", rdsk_mount_path);
-
-    // sprintf(cmd, "cp ./restored_external ./restored_external_hax;\
         ./%s -e %s/usr/local/bin/restored_external > ./restored_external_ent.plist;\
-        plutil -insert 'platform-application' -bool \"true\" ./restored_external_ent.plist;\
-        ./%s -Srestored_external_ent.plist ./restored_external_hax;\
+        ./%s -M -Srestored_external_ent.plist ./restored_external_hax;\
         rm ./restored_external_ent.plist;\
         mv ./restored_external_hax %s/usr/local/bin/restored_external;", ldid2, rdsk_mount_path, ldid2, rdsk_mount_path);
     strcpy(commands[6], cmd);
@@ -407,12 +403,6 @@ ideviceenterramdisk_patchimages()
     if (access(im4m_save_path, F_OK) != 0) {
         return -1;
     }
-
-    // sprintf(cmd, "img4tool -e -s %s -m %s/IM4M", shsh2_path, rdsk_staging_path);
-    //
-    // if (!execute_command(cmd)) {
-    //     return -1;
-    // }
 
     sprintf(cmd, "cp bootim@750x1334.im4p %s/bootim.im4p; cd %s;\
         img4 -i ./bootim.im4p -o ./bootim.img4 -M ./IM4M", rdsk_staging_path, rdsk_staging_path);
@@ -505,8 +495,10 @@ ideviceenterramdisk_load() {
     if (ret == 0) {
 
         if (access("img4.gz", F_OK) == 0) {
-            execute_command("gunzip img4.gz; xattr -d com.apple.quarantine img4 >/dev/null 2>&1; chmod +x img4");
-            execute_command("mv img4 /usr/local/bin/img4");
+            if (access("/usr/local/bin/img4", F_OK) != 0) {
+                execute_command("gunzip img4.gz; xattr -d com.apple.quarantine img4 >/dev/null 2>&1; chmod +x img4");
+                execute_command("mv img4 /usr/local/bin/img4");
+            }
         }
 
         ret = ideviceenterramdisk_decryptimages();
