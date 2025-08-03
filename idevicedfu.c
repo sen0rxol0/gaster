@@ -73,28 +73,28 @@ idevicedfu_mode(irecv_client_t client) {
 static irecv_client_t
 idevicedfu_open_client() {
     uint64_t ecid = 0;
-	irecv_client_t client = NULL;
-	int i;
-	for (i = 0; i <= 5; i++) {
-		log_debug("Attempting to connect...\n");
+  	irecv_client_t client = NULL;
 
-		irecv_error_t err = irecv_open_with_ecid(&client, ecid);
-		if (err == IRECV_E_UNSUPPORTED) {
-			log_error("%s\n", irecv_strerror(err));
-            return NULL;
-			// return -1;
-		}
-		else if (err != IRECV_E_SUCCESS)
-			sleep(1);
-		else
-			break;
+    for (int i = 0; i <= 5; i++) {
+  		log_debug("Attempting to connect...\n");
 
-		if (i == 5) {
-			log_error("%s\n", irecv_strerror(err));
-            return NULL;
-			// return -1;
-		}
-	}
+  		irecv_error_t err = irecv_open_with_ecid(&client, ecid);
+  		if (err == IRECV_E_UNSUPPORTED) {
+  			log_error("%s\n", irecv_strerror(err));
+          return NULL;
+  			// return -1;
+  		}
+  		else if (err != IRECV_E_SUCCESS)
+  			sleep(1);
+  		else
+  			break;
+
+  		if (i == 5) {
+  			log_error("%s\n", irecv_strerror(err));
+              return NULL;
+  			// return -1;
+  		}
+  	}
 
     return client;
 }
@@ -129,57 +129,50 @@ idevicedfu_info(char *t) {
 
 int
 idevicedfu_find() {
-	log_info("Searching for DFU mode device...\n");
+  	log_info("Searching for DFU mode device...");
 
-	int ret = 0;
-	irecv_device_t device = NULL;
+  	int ret = 0;
+	  irecv_device_t device = NULL;
     irecv_client_t client = idevicedfu_open_client();
 
-    if (client == NULL) {
-        return -1;
+    if (client != NULL) {
+
+      irecv_devices_get_device_by_client(client, &device);
+
+      if (device) {
+          const char *mode = idevicedfu_mode(client);
+          unsigned int chip_id = device->chip_id;
+          printf("PRODUCT: %s\n", device->product_type);
+          printf("MODEL: %s\n", device->hardware_model);
+          printf("NAME: %s\n", device->display_name);
+          log_info("Found device in %s mode.", mode);
+
+          if (strcmp(mode, "Recovery") == 0) {
+              ret = ideviceenterdfu(chip_id);
+
+              if (ret == 0) {
+                  return idevicedfu_find();
+              }
+          }
+
+          irecv_error_t error = 0;
+          error = irecv_setenv(client, "auto-boot", "true");
+          if (error != IRECV_E_SUCCESS) {
+              log_error("%s\n", irecv_strerror(error));
+          }
+
+          error = irecv_saveenv(client);
+          if (error != IRECV_E_SUCCESS) {
+              log_error("%s\n", irecv_strerror(error));
+          }
+
+          irecv_close(client);
+
+          return ret;
+      }
     }
 
-    irecv_devices_get_device_by_client(client, &device);
-
-    if (device) {
-        const char *mode = idevicedfu_mode(client);
-        unsigned int chip_id = device->chip_id;
-        log_debug("PRODUCT: %s\n", device->product_type);
-        log_debug("MODEL: %s\n", device->hardware_model);
-        log_debug("NAME: %s\n", device->display_name);
-        log_debug("MODE: %s\n", mode);
-
-        irecv_error_t error = 0;
-        error = irecv_setenv(client, "auto-boot", "true");
-        if (error != IRECV_E_SUCCESS) {
-            log_error("%s\n", irecv_strerror(error));
-        }
-
-        error = irecv_saveenv(client);
-        if (error != IRECV_E_SUCCESS) {
-            log_error("%s\n", irecv_strerror(error));
-        }
-
-        irecv_close(client);
-
-        sleep(1);
-
-        if (strcmp(mode, "DFU") == 0) {
-            log_info("Found device in DFU mode.\n");
-            ret = 0;
-        } else if (strcmp(mode, "Recovery") == 0) {
-            log_info("Found device in Recovery mode.\n");
-            ret = ideviceenterdfu(chip_id);
-
-            if (ret == 0) {
-                return idevicedfu_find();
-            }
-        }
-    } else {
-        return 1;
-    }
-
-	return ret;
+    return -1;
 }
 
 int progress_cb(irecv_client_t client, const irecv_event_t* event);
@@ -221,21 +214,14 @@ progress_cb(irecv_client_t client, const irecv_event_t* event) {
 	return 0;
 }
 
-int
+void
 idevicedfu_sendfile(const char* filepath) {
-
     irecv_error_t error = IRECV_E_SUCCESS;
     irecv_client_t client = idevicedfu_open_client();
     irecv_event_subscribe(client, IRECV_PROGRESS, &progress_cb, NULL);
 	error = irecv_send_file(client, filepath, IRECV_SEND_OPT_DFU_NOTIFY_FINISH);
 	log_debug("%s\n", irecv_strerror(error));
     irecv_close(client);
-
-    if (error != IRECV_E_SUCCESS) {
-        return -1;
-    }
-
-    return 0;
 }
 
 void

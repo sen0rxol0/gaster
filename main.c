@@ -19,6 +19,8 @@
 #include "gastera1n.h"
 
 extern bool DEBUG_ENABLED;
+extern unsigned int ramdiskBootMode;
+int pwnDFUMode;
 
 static int
 idevicepwn() {
@@ -69,26 +71,32 @@ main(int argc, char **argv) {
 	printf("\n\n");
 
 	DEBUG_ENABLED = false;
-	int pwnDFU = 0;
+	ramdiskBootMode = 0;
+	pwnDFUMode = 0;
 	int opt;
 
-	while ((opt = getopt(argc, argv, "dhp")) != -1) {
+	while ((opt = getopt(argc, argv, "htdp")) != -1) {
 	    switch (opt) {
-			case 'h':
-				printf("%s\n", "Optional arguments:\n\
-					\t-d Enable debug\n\
-					\t-p Run gaster\n");
-				return 0;
-			case 'd':
-				log_warn("%s\n", "Debug is enabled!");
-				DEBUG_ENABLED = true;
-				break;
-			case 'p':
-				log_warn("%s\n", "Running gaster, entering pwned DFU mode!");
-				pwnDFU = 1;
-				break;
-			default:
-				break;
+				case 'h':
+					printf("%s\n", "Optional arguments:\n\
+						-t Boot files from tmp directory\n\
+						-d Enable debug\n\
+						-p Run gaster\n");
+					return 0;
+				case 't':
+					log_warn("%s\n", "Booting directly, skipping downloading and patching!");
+					ramdiskBootMode = 1;
+					break;
+				case 'd':
+					log_warn("%s\n", "Debug is enabled!");
+					DEBUG_ENABLED = true;
+					break;
+				case 'p':
+					log_warn("%s\n", "Entering pwned DFU mode with gaster!");
+					pwnDFUMode = 1;
+					break;
+				default:
+					break;
      	}
 	}
 
@@ -104,11 +112,10 @@ main(int argc, char **argv) {
 		}
 	}
 
-	if (pwnDFU == 0 && ret == 0) {
+	if (pwnDFUMode == 0 && ret == 0) {
 			log_info("Device reached pwned DFU mode.");
 			ret = idevicepwn_ramdisk();
 	}
-
 
 	if (ret == 0) {
 		printf("DONE !");

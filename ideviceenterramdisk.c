@@ -196,15 +196,17 @@ download_firmware_component(const char *component_path, const char *out_path) {
 
 static int
 ideviceenterramdisk_downloadimages() {
-
-	int i = 0;
+    log_info("Downloading firmware images...");
+	  int i = 0;
     char *identifier = idevicedfu_info("product_type");
 
     while(device_loaders[i].identifier != NULL) {
+
         if(!strcmp(device_loaders[i].identifier, identifier)) {
-			ipsw_loader = device_loaders[i];
-            break;
+    	       ipsw_loader = device_loaders[i];
+             break;
         }
+
         i += 1;
     }
 
@@ -219,7 +221,6 @@ ideviceenterramdisk_downloadimages() {
 
 		ipsw_url = (char*)ipsw_loader.ipsw_url;
     log_debug("Found IPSW loader : %s", ipsw_url);
-    log_info("Downloading firmware images...");
 		int ret;
 		ret = download_firmware_component(kernelcache_path, kernelcache_save_path);
 
@@ -292,7 +293,6 @@ static int
 ideviceenterramdisk_patchimages()
 {
     log_info("Patching images...");
-
     char *cmd[CHAR_MAX];
 
     if (access(tsschecker, F_OK) != 0) {
@@ -326,7 +326,7 @@ ideviceenterramdisk_patchimages()
         return -1;
     }
 
-    if (access("iBoot64Patcher.gz", F_OK) == 0) {
+    if (access("./iBoot64Patcher.gz", F_OK) == 0) {
         execute_command("gunzip iBoot64Patcher.gz; xattr -d com.apple.quarantine iBoot64Patcher >/dev/null 2>&1; chmod +x iBoot64Patcher;");
     }
 
@@ -362,7 +362,7 @@ ideviceenterramdisk_patchimages()
     char *commands[cmd_list_len][CHAR_MAX];
 
     sprintf(cmd, "cd %s; cp %s.dec ./rdsk.dmg;\
-        hdiutil resize -size 170MB ./rdsk.dmg;\
+        hdiutil resize -size 180MB ./rdsk.dmg;\
         hdiutil attach ./rdsk.dmg -mountpoint %s;\
         sleep 5;", rdsk_staging_path, ramdisk_save_path, rdsk_mount_path);
     strcpy(commands[0], cmd);
@@ -432,43 +432,23 @@ ideviceenterramdisk_bootrd() {
     sleep(1);
 
     if (ret == 0) {
-        ret = idevicedfu_sendfile(iBSS_img4_path);
+
+        idevicedfu_sendfile(iBSS_img4_path);
         sleep(1);
-    }
-
-    if (ret == 0) {
-        ret = idevicedfu_sendfile(iBEC_img4_path);
+        idevicedfu_sendfile(iBEC_img4_path);
         sleep(1);
-
-        if (ret == 0) {
-            idevicedfu_sendcommand("go");
-            sleep(5);
-        }
-    }
-
-    if (ret == 0) {
-        ret = idevicedfu_sendfile(bootim_img4_path);
+        idevicedfu_sendcommand("go");
+        sleep(5);
+        idevicedfu_sendfile(bootim_img4_path);
         idevicedfu_sendcommand("setpicture 0x1");
         idevicedfu_sendcommand("bgcolor 255 55 55");
-    }
-
-    if (ret == 0) {
-        ret = idevicedfu_sendfile(devicetree_img4_path);
+        idevicedfu_sendfile(devicetree_img4_path);
         idevicedfu_sendcommand("devicetree");
-    }
-
-    if (ret == 0) {
-        ret = idevicedfu_sendfile(ramdisk_img4_path);
+        idevicedfu_sendfile(ramdisk_img4_path);
         idevicedfu_sendcommand("ramdisk");
-    }
-
-    if (ret == 0) {
-        ret = idevicedfu_sendfile(trustcache_img4_path);
+        idevicedfu_sendfile(trustcache_img4_path);
         idevicedfu_sendcommand("firmware");
-    }
-
-    if (ret == 0) {
-        ret = idevicedfu_sendfile(kernelcache_img4_path);
+        idevicedfu_sendfile(kernelcache_img4_path);
         idevicedfu_sendcommand("bootx");
         log_info("Device should be booting now.");
     }
@@ -481,14 +461,12 @@ ideviceenterramdisk_load() {
 	int ret = EXIT_SUCCESS;
 	char *cmd[CHAR_MAX];
 
-	sprintf(cmd, "bash -c 'if [ ! -d %s ];then mkdir -p %s; else rm %s/* >/dev/null 2>&1; fi'", rdsk_staging_path, rdsk_mount_path, rdsk_staging_path);
-	ret = execute_command(cmd) ? 0 : -1;
+	if (ramdiskBootMode != 1) {
+    sprintf(cmd, "bash -c 'if [ ! -d %s ];then mkdir -p %s; else rm %s/* >/dev/null 2>&1; fi'", rdsk_staging_path, rdsk_mount_path, rdsk_staging_path);
+    execute_command(cmd);
 
-	if (ret == 0) {
-		ret = ideviceenterramdisk_downloadimages();
-        sleep(3);
-
-	}
+    ret = ideviceenterramdisk_downloadimages();
+    sleep(3);
 
     if (ret == 0) {
 
@@ -503,13 +481,16 @@ ideviceenterramdisk_load() {
         sleep(3);
     }
 
-	if (ret == 0) {
+    if (ret == 0) {
         ret = ideviceenterramdisk_patchimages();
     }
+	} else {
+    ret = 0;
+  }
 
-    if (ret == 0) {
-        ret = ideviceenterramdisk_bootrd();
-    }
+  if (ret == 0) {
+      ret = ideviceenterramdisk_bootrd();
+  }
 
 	return ret;
 }
