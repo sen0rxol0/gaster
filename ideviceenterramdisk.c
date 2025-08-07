@@ -15,6 +15,8 @@
 #include <plist/plist.h>
 #include <libfragmentzip/libfragmentzip.h>
 
+#include "kerneldiff.c"
+
 static device_loader ipsw_loader;
 static char *ipsw_url;
 static const char *rdsk_staging_path = "/tmp/gastera1n_rdsk",\
@@ -57,68 +59,6 @@ im4m_from_shsh(char *path, char *im4m_path) {
     fclose(f);
 }
 
-// kerneldiff original source: https://raw.githubusercontent.com/verygenericname/kerneldiff_C/refs/heads/main/kerneldiff.c
-#define MAX_DIFF 16384
-#define DIFF_COMP_MAX_SIZE 20
-
-static int
-kerneldiff(char *kc_raw, char *kc_patched, char *kc_diff) {
-
-  struct stat st2;
-  stat(kc_patched, &st2);
-  FILE *fp2 = fopen(kc_patched, "rb");
-  char *p = malloc(st2.st_size);
-  fread(p, 1, st2.st_size, fp2);
-  fclose(fp2);
-
-  struct stat st1;
-  stat(kc_raw, &st1);
-  FILE *fp1 = fopen(kc_raw, "rb");
-  char *o = malloc(st1.st_size);
-  fread(o, 1, st1.st_size, fp1);
-  fclose(fp1);
-
-  char diff[MAX_DIFF][3][DIFF_COMP_MAX_SIZE];
-  int diffIndex = 0;
-
-  for (int i = 0; i < st1.st_size; i++) {
-    char originalByte = o[i];
-    char patchedByte = p[i];
-
-    if (originalByte != patchedByte) {
-     if ((diffIndex + 1) > MAX_DIFF) {
-        fprintf(stderr, "kerneldiff: too many differences, only a maximum %d 8-byte differences are supported\n", MAX_DIFF);
-        return -1;
-      }
-      snprintf(diff[diffIndex][0], DIFF_COMP_MAX_SIZE, "0x%x", i);
-
-      snprintf(diff[diffIndex][1], DIFF_COMP_MAX_SIZE, "0x%x", originalByte);
-
-      snprintf(diff[diffIndex][2], DIFF_COMP_MAX_SIZE, "0x%x", patchedByte);
-
-      diffIndex++;
-    }
-  }
-
-  free(p);
-  free(o);
-
-  FILE *fp0 = fopen(kc_diff, "w+");
-  fwrite("#AMFI\n\n", 1, 7, fp0);
-
-  for (int i = 0; i < diffIndex; i++) {
-    int dataSize = strlen(diff[i][0]) + strlen(diff[i][1]) + strlen(diff[i][2]) + 3;
-    char data[dataSize];
-    sprintf(data, "%s %s %s\n", diff[i][0], diff[i][1], diff[i][2]);
-
-    fwrite(data, 1, dataSize, fp0);
-    printf("%s", data);
-  }
-
-  fclose(fp0);
-
-  return 0;
-}
 
 static bool
 execute_command(char *command) {
@@ -130,7 +70,7 @@ execute_command(char *command) {
 		return false;
 	}
 
-    size_t line_sz = 130;
+  size_t line_sz = 130;
 	char line[line_sz];
 
 	while (fgets( line, line_sz, fp)){
@@ -254,10 +194,10 @@ ideviceenterramdisk_downloadimages() {
 
 static int
 ideviceenterramdisk_decryptimages() {
-  log_info("Decrypting downloaded images...");
-  char *dec_list[] = { kernelcache_save_path, trustcache_save_path, ramdisk_save_path, devicetree_save_path, NULL };
-	char *cmd[CHAR_MAX];
-  int ret = 0,
+    log_info("Decrypting downloaded images...");
+    char *dec_list[] = { kernelcache_save_path, trustcache_save_path, ramdisk_save_path, devicetree_save_path, NULL };
+  	char *cmd[CHAR_MAX];
+    int ret = 0,
     i = 0;
 
     while(dec_list[i] != NULL) {
