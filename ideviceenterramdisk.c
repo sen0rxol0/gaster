@@ -35,17 +35,6 @@ typedef struct {
 } rdsk_ctx_t;
 
 
-static device_loader ipsw_loader;
-static char *ipsw_url;
-// static const char *rdsk_staging_path = "/tmp/gastera1n_rdsk",\
-// *rdsk_mount_path = "/tmp/gastera1n_rdsk/dmg_mountpoint",\
-// *kernelcache_save_path = "/tmp/gastera1n_rdsk/kernelcache.release",\
-// *trustcache_save_path = "/tmp/gastera1n_rdsk/dmg.trustcache",\
-// *ramdisk_save_path = "/tmp/gastera1n_rdsk/ramdisk.dmg",\
-// *devicetree_save_path = "/tmp/gastera1n_rdsk/DeviceTree.im4p",\
-// *iBEC_save_path = "/tmp/gastera1n_rdsk/iBEC.im4p",\
-// *iBSS_save_path = "/tmp/gastera1n_rdsk/iBSS.im4p";
-
 static const char *iBSS_img4_path = "/tmp/gastera1n_rdsk/ibss.img4",\
 *iBEC_img4_path = "/tmp/gastera1n_rdsk/ibec.img4",\
 *bootim_img4_path = "/tmp/gastera1n_rdsk/bootim.img4",\
