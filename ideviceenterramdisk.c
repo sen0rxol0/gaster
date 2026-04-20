@@ -17,16 +17,35 @@
 
 #include "kerneldiff.c"
 
+typedef struct {
+    device_loader loader;
+    char *ipsw_url;
+
+    char staging[PATH_MAX];
+    char mount[PATH_MAX];
+
+    char kernelcache[PATH_MAX];
+    char trustcache[PATH_MAX];
+    char ramdisk[PATH_MAX];
+    char devicetree[PATH_MAX];
+    char ibec[PATH_MAX];
+    char ibss[PATH_MAX];
+
+    char im4m[PATH_MAX];
+} rdsk_ctx_t;
+
+
 static device_loader ipsw_loader;
 static char *ipsw_url;
-static const char *rdsk_staging_path = "/tmp/gastera1n_rdsk",\
-*rdsk_mount_path = "/tmp/gastera1n_rdsk/dmg_mountpoint",\
-*kernelcache_save_path = "/tmp/gastera1n_rdsk/kernelcache.release",\
-*trustcache_save_path = "/tmp/gastera1n_rdsk/dmg.trustcache",\
-*ramdisk_save_path = "/tmp/gastera1n_rdsk/ramdisk.dmg",\
-*devicetree_save_path = "/tmp/gastera1n_rdsk/DeviceTree.im4p",\
-*iBEC_save_path = "/tmp/gastera1n_rdsk/iBEC.im4p",\
-*iBSS_save_path = "/tmp/gastera1n_rdsk/iBSS.im4p";
+// static const char *rdsk_staging_path = "/tmp/gastera1n_rdsk",\
+// *rdsk_mount_path = "/tmp/gastera1n_rdsk/dmg_mountpoint",\
+// *kernelcache_save_path = "/tmp/gastera1n_rdsk/kernelcache.release",\
+// *trustcache_save_path = "/tmp/gastera1n_rdsk/dmg.trustcache",\
+// *ramdisk_save_path = "/tmp/gastera1n_rdsk/ramdisk.dmg",\
+// *devicetree_save_path = "/tmp/gastera1n_rdsk/DeviceTree.im4p",\
+// *iBEC_save_path = "/tmp/gastera1n_rdsk/iBEC.im4p",\
+// *iBSS_save_path = "/tmp/gastera1n_rdsk/iBSS.im4p";
+
 static const char *iBSS_img4_path = "/tmp/gastera1n_rdsk/ibss.img4",\
 *iBEC_img4_path = "/tmp/gastera1n_rdsk/ibec.img4",\
 *bootim_img4_path = "/tmp/gastera1n_rdsk/bootim.img4",\
@@ -37,6 +56,125 @@ static const char *iBSS_img4_path = "/tmp/gastera1n_rdsk/ibss.img4",\
 
 static const char *ldid2 = "ldid2";
 static const char *tsschecker = "tsschecker_macOS_v440";
+
+static void ctx_init(rdsk_ctx_t *ctx)
+{
+    strcpy(ctx->staging, "/tmp/gastera1n_rdsk");
+    strcpy(ctx->mount,   "/tmp/gastera1n_rdsk/dmg_mountpoint");
+
+    sprintf(ctx->kernelcache, "%s/kernelcache.release", ctx->staging);
+    sprintf(ctx->trustcache,  "%s/dmg.trustcache",      ctx->staging);
+    sprintf(ctx->ramdisk,     "%s/ramdisk.dmg",         ctx->staging);
+    sprintf(ctx->devicetree,  "%s/DeviceTree.im4p",     ctx->staging);
+    sprintf(ctx->ibec,        "%s/iBEC.im4p",           ctx->staging);
+    sprintf(ctx->ibss,        "%s/iBSS.im4p",           ctx->staging);
+    sprintf(ctx->im4m,        "%s/IM4M",                ctx->staging);
+}
+
+
+static bool run_cmd(const char *fmt, ...)
+{
+    char cmd[4096];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(cmd, sizeof(cmd), fmt, args);
+    va_end(args);
+
+    log_debug("Executing: %s\n", cmd);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return false;
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp))
+        fputs(line, stdout);
+
+    return pclose(fp) == 0;
+}
+
+
+static int stage_prepare_workspace(rdsk_ctx_t *ctx)
+{
+    return run_cmd(
+        "bash -c 'mkdir -p %s %s && rm -rf %s/*'",
+        ctx->staging, ctx->mount, ctx->staging
+    ) ? 0 : -1;
+}
+
+static int stage_detect_loader(rdsk_ctx_t *ctx)
+{
+    char *identifier = idevicedfu_info("product_type");
+
+    for (int i = 0; device_loaders[i].identifier; i++) {
+        if (!strcmp(device_loaders[i].identifier, identifier)) {
+            ctx->loader = device_loaders[i];
+            ctx->ipsw_url = (char*)ctx->loader.ipsw_url;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+static int download_component(rdsk_ctx_t *ctx,
+                              const char *remote,
+                              const char *local)
+{
+    fragmentzip_t *ipsw = fragmentzip_open(ctx->ipsw_url);
+    if (!ipsw) return -1;
+
+    log_info("Downloading %s", remote);
+    int r = fragmentzip_download_file(ipsw, remote, local, default_prog_cb);
+    fragmentzip_close(ipsw);
+    return r;
+}
+
+static int stage_download_images(rdsk_ctx_t *ctx)
+{
+    struct {
+        const char *remote;
+        const char *local;
+    } files[] = {
+        { ctx->loader.kernelcache_path, ctx->kernelcache },
+        { ctx->loader.trustcache_path,  ctx->trustcache },
+        { ctx->loader.ramdisk_path,     ctx->ramdisk },
+        { ctx->loader.devicetree_path,  ctx->devicetree },
+        { ctx->loader.ibec_path,        ctx->ibec },
+        { ctx->loader.ibss_path,        ctx->ibss },
+        { NULL, NULL }
+    };
+
+    for (int i = 0; files[i].remote; i++)
+        if (download_component(ctx, files[i].remote, files[i].local))
+            return -1;
+
+    return 0;
+}
+
+static int decrypt_img4(const char *path)
+{
+    return run_cmd("img4 -i %s -o %s.dec", path, path) ? 0 : -1;
+}
+
+static int stage_decrypt(rdsk_ctx_t *ctx)
+{
+    const char *list[] = {
+        ctx->kernelcache,
+        ctx->trustcache,
+        ctx->ramdisk,
+        ctx->devicetree,
+        NULL
+    };
+
+    for (int i = 0; list[i]; i++)
+        if (decrypt_img4(list[i])) return -1;
+
+    char out[PATH_MAX];
+    sprintf(out, "%s.dec", ctx->ibec);
+    if (gastera1n_decrypt(ctx->ibec, out)) return -1;
+
+    sprintf(out, "%s.dec", ctx->ibss);
+    return gastera1n_decrypt(ctx->ibss, out);
+}
 
 void
 im4m_from_shsh(char *path, char *im4m_path) {
@@ -396,41 +534,19 @@ ideviceenterramdisk_bootrd() {
     return ret;
 }
 
-int
-ideviceenterramdisk_load() {
-	int ret = EXIT_SUCCESS;
-	char *cmd[CHAR_MAX];
+int ideviceenterramdisk_load(void)
+{
+    rdsk_ctx_t ctx;
+    ctx_init(&ctx);
 
-	if (ramdiskBootMode != 1) {
-    sprintf(cmd, "bash -c 'if [ ! -d %s ];then mkdir -p %s; else rm %s/* >/dev/null 2>&1; fi'", rdsk_staging_path, rdsk_mount_path, rdsk_staging_path);
-    execute_command(cmd);
+    if (ramdiskBootMode == 1)
+        return ideviceenterramdisk_bootrd();
 
-    ret = ideviceenterramdisk_downloadimages();
-    sleep(3);
+    if (stage_prepare_workspace(&ctx))  return -1;
+    if (stage_detect_loader(&ctx))      return -1;
+    if (stage_download_images(&ctx))    return -1;
+    if (stage_decrypt(&ctx))            return -1;
+    if (stage_patch(&ctx))              return -1;
 
-    if (ret == 0) {
-
-        if (access("img4.gz", F_OK) == 0) {
-            if (access("/usr/local/bin/img4", F_OK) != 0) {
-                execute_command("gunzip img4.gz; xattr -d com.apple.quarantine img4 >/dev/null 2>&1; chmod +x img4");
-                execute_command("mv img4 /usr/local/bin/img4");
-            }
-        }
-
-        ret = ideviceenterramdisk_decryptimages();
-        sleep(3);
-    }
-
-    if (ret == 0) {
-        ret = ideviceenterramdisk_patchimages();
-    }
-	} else {
-    ret = 0;
-  }
-
-  if (ret == 0) {
-      ret = ideviceenterramdisk_bootrd();
-  }
-
-	return ret;
+    return ideviceenterramdisk_bootrd();
 }
