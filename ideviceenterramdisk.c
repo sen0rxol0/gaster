@@ -34,15 +34,6 @@ typedef struct {
     char im4m[PATH_MAX];
 } rdsk_ctx_t;
 
-
-static const char *iBSS_img4_path = "/tmp/gastera1n_rdsk/ibss.img4",\
-*iBEC_img4_path = "/tmp/gastera1n_rdsk/ibec.img4",\
-*bootim_img4_path = "/tmp/gastera1n_rdsk/bootim.img4",\
-*devicetree_img4_path = "/tmp/gastera1n_rdsk/dtree.img4",\
-*ramdisk_img4_path = "/tmp/gastera1n_rdsk/rdsk.img4",\
-*trustcache_img4_path = "/tmp/gastera1n_rdsk/trustcache.img4",\
-*kernelcache_img4_path = "/tmp/gastera1n_rdsk/kernelcache.img4";
-
 static const char *ldid2 = "ldid2";
 static const char *tsschecker = "tsschecker_macOS_v440";
 
