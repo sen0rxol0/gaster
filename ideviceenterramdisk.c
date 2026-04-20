@@ -305,46 +305,90 @@ static int stage_patch_iboot(rdsk_ctx_t *ctx)
     return patch_iboot(ctx->ibss, NULL);
 }
 
+static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
+{
+    return run_cmd(
+        "cd %s && "
+        "cp restored_external restored_external_hax && "
+        "./ldid2 -e %s/usr/local/bin/restored_external > restored_external.plist && "
+        "./ldid2 -M -Srestored_external.plist restored_external_hax && "
+        "mv restored_external_hax %s/usr/local/bin/restored_external && "
+        "rm restored_external.plist",
+        ctx->staging,
+        ctx->mount,
+        ctx->mount
+    ) ? 0 : -1;
+}
+
 static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 {
+    log_info("Building ramdisk...");
+
+    /* merge split ssh archive if needed */
     if (access("ssh64.tar.gz", F_OK) != 0)
         if (!run_cmd("cat ssh64.tar.gz* > ssh64.tar.gz"))
             return -1;
 
+    /* create working dmg */
     if (!run_cmd(
         "cp %s.dec %s/rdsk.dmg && "
-        "hdiutil resize -size 180MB %s/rdsk.dmg && "
+        "hdiutil resize -size 180MB %s/rdsk.dmg",
+        ctx->ramdisk, ctx->staging, ctx->staging))
+        return -1;
+
+    /* mount */
+    if (!run_cmd(
         "hdiutil attach %s/rdsk.dmg -mountpoint %s",
-        ctx->ramdisk, ctx->staging, ctx->staging,
         ctx->staging, ctx->mount))
         return -1;
 
-    if (!run_cmd("echo \"WELCOME BACK!\" > %s/etc/motd", ctx->mount))
+    /* basic filesystem prep */
+    if (!run_cmd(
+        "echo 'WELCOME BACK!' > %s/etc/motd && "
+        "mkdir -p %s/private/var/root "
+                  "%s/private/var/run "
+                  "%s/sshd",
+        ctx->mount, ctx->mount, ctx->mount, ctx->mount))
         return -1;
 
-    if (!run_cmd("mkdir -p %s/private/var/root %s/private/var/run",
-                 ctx->mount, ctx->mount))
+    /* extract SSH payload */
+    if (!run_cmd(
+        "tar -C %s/sshd --preserve-permissions -xf ssh64.tar.gz",
+        ctx->mount))
         return -1;
 
-    if (!run_cmd("tar -C %s -xf ssh64.tar.gz", ctx->mount))
+    /* install SSH payload into root */
+    if (!run_cmd(
+        "cd %s/sshd && "
+        "chmod 0755 bin/* usr/bin/* usr/sbin/* usr/local/bin/* && "
+        "rsync --ignore-existing -auK . %s/",
+        ctx->mount, ctx->mount))
         return -1;
 
+    /* cleanup unneeded files */
+    if (!run_cmd(
+        "rm -rf %s/sshd "
+                "%s/usr/local/standalone/firmware/* "
+                "%s/usr/share/progressui "
+                "%s/usr/share/terminfo "
+                "%s/etc/apt "
+                "%s/etc/dpkg",
+        ctx->mount, ctx->mount, ctx->mount,
+        ctx->mount, ctx->mount, ctx->mount))
+        return -1;
+
+    if (patch_restored_external_in_ramdisk(ctx))
+        return -1;
+
+    /* detach dmg */
     if (!run_cmd("hdiutil detach -force %s", ctx->mount))
         return -1;
 
-    return run_cmd("hdiutil resize -sectors min %s/rdsk.dmg", ctx->staging)
-        ? 0 : -1;
-}
+    /* shrink to minimal */
+    if (!run_cmd("hdiutil resize -sectors min %s/rdsk.dmg", ctx->staging))
+        return -1;
 
-static int stage_sign_restored_external(rdsk_ctx_t *ctx)
-{
-    return run_cmd(
-        "cp restored_external restored_external_hax && "
-        "./ldid2 -e %s/usr/local/bin/restored_external > restored_external.plist && "
-        "./ldid2 -M -Srestored_external.plist restored_external_hax && "
-        "mv restored_external_hax %s/usr/local/bin/restored_external",
-        ctx->mount, ctx->mount
-    ) ? 0 : -1;
+    return 0;
 }
 
 static int stage_build_img4(rdsk_ctx_t *ctx)
