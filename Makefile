@@ -3,13 +3,7 @@ LIBS_DIR = $(SRC)/libs_root
 STRIP = strip
 CC ?= cc
 CFLAGS += -I$(LIBS_DIR)/include
-# CFLAGS += -I$(LIBS_DIR)/include -I$(SRC)/include -I$(SRC)
 CFLAGS += -Weverything -DGASTERAIN_VERSION=\"1.0\"
-# CFLAGS += -Wall -Wextra -Wno-unused-parameter -DGASTERAIN_VERSION=\"1.0.0\"
-# CFLAGS += -Wno-unused-variable -std=c99 -pedantic-errors -D_C99_SOURCE -D_POSIX_C_SOURCE=200112L -D_DARWIN_C_SOURCE
-LIBS += $(LIBS_DIR)/lib/libmbedtls.a $(LIBS_DIR)/lib/libmbedcrypto.a $(LIBS_DIR)/lib/libmbedx509.a $(LIBS_DIR)/lib/libreadline.a
-LIBS += $(LIBS_DIR)/lib/libusbmuxd-2.0.a $(LIBS_DIR)/lib/libplist-2.0.a $(LIBS_DIR)/lib/libirecovery-1.0.a
-LIBS += $(LIBS_DIR)/lib/libimobiledevice-glue-1.0.a $(LIBS_DIR)/lib/libimobiledevice-1.0.a
 LIBS += $(LIBS_DIR)/lib/libgeneral.a $(LIBS_DIR)/lib/libfragmentzip.a -lcurl -lpthread
 ifeq ($(TARGET_OS),)
 TARGET_OS = $(shell uname -s)
@@ -31,7 +25,7 @@ CFLAGS += -Os -g
 CFLAGS += -DBUILD_STYLE="RELEASE" -DBUILD_DATE="\"$(shell LANG=C date)\"" -DBUILD_WHOAMI=\"$(shell whoami)\"
 LIBS += -lc -lz
 
-SRCC=main.c lzfse.c gastera1n.c ideviceenterrecovery.c idevicedfu.c ideviceenterramdisk.c kernel64patcher.c
+SRCC=main.c lzfse.c gastera1n.c ideviceenterramdisk.c kernel64patcher.c
 
 all: gastera1n
 
