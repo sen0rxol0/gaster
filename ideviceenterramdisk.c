@@ -328,18 +328,24 @@ static int stage_ensure_tools(void)
 
 static int stage_prepare(rdsk_ctx_t *ctx)
 {
-	char *identifier = dfu_get_info("product_type");
-	
-	for (int i = 0; device_loaders[i].identifier; i++) {
-		if (!strcmp(device_loaders[i].identifier, identifier)) {
-			ctx->loader = device_loaders[i];
-			ctx->ipsw_url = (char*)ctx->loader.ipsw_url;
-		} else {
-			return -1;
-		}
-	}
-	
-	return run_cmd("bash -c 'rm -rf %s && mkdir -p %s %s'", ctx->staging, ctx->mount, ctx->staging) ? 0 : -1;	
+    char *identifier = dfu_get_info("product_type");
+
+    for (int i = 0; device_loaders[i].identifier; i++) {
+        if (!strcmp(device_loaders[i].identifier, identifier)) {
+            ctx->loader = device_loaders[i];
+            ctx->ipsw_url = (char*)ctx->loader.ipsw_url;
+            goto found;
+        }
+    }
+
+    log_error("Unsupported device: %s\n", identifier);
+    return -1;
+
+found:
+    return run_cmd(
+        "bash -c 'rm -rf %s && mkdir -p %s %s'",
+        ctx->staging, ctx->mount, ctx->staging
+    ) ? 0 : -1;	
 }
 
 static int download_component(rdsk_ctx_t *ctx,
@@ -633,12 +639,12 @@ int ideviceenterramdisk_load(void)
     ctx_init(&ctx);
 
     if (ramdiskBootMode == 1)
-        return stage_boot_ramdisk();
+        return stage_boot_ramdisk(&ctx);
 
     if (stage_prepare(&ctx))  return -1;
     if (stage_download_images(&ctx))    return -1;
     if (stage_decrypt(&ctx))            return -1;
     if (stage_patch(&ctx))              return -1;
 
-    return stage_boot_ramdisk();
+    return stage_boot_ramdisk(&ctx);
 }
