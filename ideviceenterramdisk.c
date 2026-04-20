@@ -87,7 +87,8 @@ static bool run_cmd(const char *fmt, ...)
     return pclose(fp) == 0;
 }
 
-static void default_prog_cb(unsigned int progress) {
+static void default_prog_cb(unsigned int progress)
+{
 
 	if(progress < 0) {
 		return;
@@ -117,7 +118,8 @@ static void default_prog_cb(unsigned int progress) {
 }
 
 
-int dfu_progress_cb(irecv_client_t client, const irecv_event_t* event) {
+int dfu_progress_cb(irecv_client_t client, const irecv_event_t* event)
+{
 	if (event->type == IRECV_PROGRESS) {
 
         double progress = event->progress;
@@ -326,7 +328,7 @@ static int stage_ensure_tools(void)
 
 static int stage_prepare(rdsk_ctx_t *ctx)
 {
-	char *identifier = idevicedfu_info("product_type");
+	char *identifier = dfu_get_info("product_type");
 	
 	for (int i = 0; device_loaders[i].identifier; i++) {
 		if (!strcmp(device_loaders[i].identifier, identifier)) {
@@ -409,9 +411,9 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
     if (access(shsh, F_OK) == 0)
         return 0;
 
-    char *ecid  = dfu_info("ecid");
-    char *ptype = dfu_info("product_type");
-    char *model = dfu_info("model");
+    char *ecid  = dfu_get_info("ecid");
+    char *ptype = dfu_get_info("product_type");
+    char *model = dfu_get_info("model");
 
     if (!run_cmd(
         "./tsschecker_macOS_v440 -e %s -d %s -B %s -b -l -s --save-path %s",
