@@ -6,7 +6,6 @@
 
 #include "log.h"
 #include "ideviceenterramdisk.h"
-#include "idevicedfu.h"
 #include "ideviceloaders.h"
 
 #include "gastera1n.h"
@@ -14,6 +13,7 @@
 
 #include <plist/plist.h>
 #include <libfragmentzip/libfragmentzip.h>
+#include <libirecovery.h>
 
 #include "kerneldiff.c"
 
@@ -51,7 +51,6 @@ static void ctx_init(rdsk_ctx_t *ctx)
     sprintf(ctx->im4m,        "%s/IM4M",                ctx->staging);
 }
 
-
 static bool run_cmd(const char *fmt, ...)
 {
     char cmd[4096];
@@ -70,28 +69,6 @@ static bool run_cmd(const char *fmt, ...)
         fputs(line, stdout);
 
     return pclose(fp) == 0;
-}
-
-
-void im4m_from_shsh(char *path, char *im4m_path)
-{
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-    fseek(f, 0, SEEK_END);
-    size_t size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* data = (char*)malloc(size);
-    if (data) fread(data, size, 1, f);
-    fclose(f);
-    plist_t shsh_plist = NULL;
-    plist_from_memory((const char*)data, (uint32_t)size, &shsh_plist, NULL);
-    plist_t ticket = plist_dict_get_item(shsh_plist, "ApImg4Ticket");
-    char *im4m = 0;
-    uint64_t im4m_size = 0;
-    plist_get_data_val(ticket, &im4m, &im4m_size);
-    f = fopen(im4m_path, "wb");
-    fwrite(im4m, 1, im4m_size, f);
-    fclose(f);
 }
 
 static void default_prog_cb(unsigned int progress) {
@@ -121,6 +98,151 @@ static void default_prog_cb(unsigned int progress) {
 	if(progress == 100) {
 		printf("\n");
 	}
+}
+
+static char* dup_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int len = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+
+    char *buf = malloc(len + 1);
+    va_start(ap, fmt);
+    vsnprintf(buf, len + 1, fmt, ap);
+    va_end(ap);
+
+    return buf;
+}
+
+static irecv_client_t dfu_open_client()
+{
+    uint64_t ecid = 0;
+  	irecv_client_t client = NULL;
+
+    for (int i = 0; i <= 5; i++) {
+  		log_debug("Attempting to connect...\n");
+
+  		irecv_error_t err = irecv_open_with_ecid(&client, ecid);
+  		if (err == IRECV_E_UNSUPPORTED) {
+  			log_error("%s\n", irecv_strerror(err));
+          return NULL;
+  			// return -1;
+  		}
+  		else if (err != IRECV_E_SUCCESS)
+  			sleep(1);
+  		else
+  			break;
+
+  		if (i == 5) {
+  			log_error("%s\n", irecv_strerror(err));
+              return NULL;
+  			// return -1;
+  		}
+  	}
+
+    return client;
+}
+
+int dfu_wait_for_device()
+{
+    log_info("Searching for DFU mode device...");
+
+  	int ret = 0;
+	irecv_device_t device = NULL;
+    irecv_client_t client = dfu_open_client();
+
+    if (client != NULL) {
+
+      irecv_devices_get_device_by_client(client, &device);
+
+      if (device) {
+		  
+          irecv_error_t error = 0;
+          error = irecv_setenv(client, "auto-boot", "true");
+          if (error != IRECV_E_SUCCESS) {
+              log_error("%s\n", irecv_strerror(error));
+          }
+
+          error = irecv_saveenv(client);
+          if (error != IRECV_E_SUCCESS) {
+              log_error("%s\n", irecv_strerror(error));
+          }
+
+          irecv_close(client);
+
+          return ret;
+      }
+    }
+
+    return -1;
+}
+
+char* dfu_get_info(const char *t)
+{
+    log_debug("Getting device info: %s", t);
+
+    irecv_client_t client = dfu_open_client();
+    const struct irecv_device_info *devinfo = irecv_get_device_info(client);
+    irecv_device_t device = NULL;
+    irecv_devices_get_device_by_client(client, &device);
+
+    char *info = NULL;
+
+    if (!strcmp(t,"ecid"))
+        info = dup_printf("0x%016llX", devinfo->ecid);
+
+    else if (!strcmp(t,"cpid"))
+        info = dup_printf("0x%04X", devinfo->cpid);
+
+    else if (!strcmp(t,"product_type"))
+        info = strdup(device->product_type);
+
+    else if (!strcmp(t,"model"))
+        info = strdup(device->hardware_model);
+
+    irecv_close(client);
+    log_debug("%s\n", info);
+    return info;
+}
+
+int dfu_send_file(const char* filepath)
+{
+    irecv_client_t client = dfu_open_client();
+    irecv_event_subscribe(client, IRECV_PROGRESS, &progress_cb, NULL);
+    irecv_error_t err = irecv_send_file(client, filepath,
+                     IRECV_SEND_OPT_DFU_NOTIFY_FINISH);
+    irecv_close(client);
+    return err == IRECV_E_SUCCESS ? 0 : -1;
+}
+
+int dfu_send_cmd(const char* command)
+{
+    irecv_client_t client = dfu_open_client();
+    irecv_error_t err = irecv_send_command(client, command);
+    irecv_close(client);
+    return err == IRECV_E_SUCCESS ? 0 : -1;
+}
+
+void im4m_from_shsh(char *path, char *im4m_path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* data = (char*)malloc(size);
+    if (data) fread(data, size, 1, f);
+    fclose(f);
+    plist_t shsh_plist = NULL;
+    plist_from_memory((const char*)data, (uint32_t)size, &shsh_plist, NULL);
+    plist_t ticket = plist_dict_get_item(shsh_plist, "ApImg4Ticket");
+    char *im4m = 0;
+    uint64_t im4m_size = 0;
+    plist_get_data_val(ticket, &im4m, &im4m_size);
+    f = fopen(im4m_path, "wb");
+    fwrite(im4m, 1, im4m_size, f);
+    fclose(f);
 }
 
 static int stage_prepare_workspace(rdsk_ctx_t *ctx)
@@ -419,36 +541,46 @@ static int stage_patch(rdsk_ctx_t *ctx)
     return 0;
 }
 
-static int
-ideviceenterramdisk_bootrd() {
-    log_info("Booting device into SSH ramdisk mode...");
-    int ret = 0;
-    ret = gastera1n_reset();
+static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
+{
+    log_info("Waiting for DFU device...");
+    if (dfu_wait_for_device() != 0)
+        return -1;
+
+    log_info("Booting SSH ramdisk...");
+
+    if (gastera1n_reset() != 0)
+        return -1;
+
     sleep(1);
 
-    if (ret == 0) {
+    if (dfu_send_file(ctx->ibss_img4)) return -1;
+    sleep(1);
 
-        idevicedfu_sendfile(iBSS_img4_path);
-        sleep(1);
-        idevicedfu_sendfile(iBEC_img4_path);
-        sleep(1);
-        idevicedfu_sendcommand("go");
-        sleep(5);
-        idevicedfu_sendfile(bootim_img4_path);
-        idevicedfu_sendcommand("setpicture 0x1");
-        idevicedfu_sendcommand("bgcolor 255 55 55");
-        idevicedfu_sendfile(devicetree_img4_path);
-        idevicedfu_sendcommand("devicetree");
-        idevicedfu_sendfile(ramdisk_img4_path);
-        idevicedfu_sendcommand("ramdisk");
-        idevicedfu_sendfile(trustcache_img4_path);
-        idevicedfu_sendcommand("firmware");
-        idevicedfu_sendfile(kernelcache_img4_path);
-        idevicedfu_sendcommand("bootx");
-        log_info("Device should be booting now.");
-    }
+    if (dfu_send_file(ctx->ibec_img4)) return -1;
+    sleep(1);
 
-    return ret;
+    if (dfu_send_cmd("go")) return -1;
+    sleep(5);
+
+    if (dfu_send_file(ctx->bootim_img4)) return -1;
+    if (dfu_send_cmd("setpicture 0x1")) return -1;
+    if (dfu_send_cmd("bgcolor 255 55 55")) return -1;
+
+    if (dfu_send_file(ctx->devicetree_img4)) return -1;
+    if (dfu_send_cmd("devicetree")) return -1;
+
+    if (dfu_send_file(ctx->ramdisk_img4)) return -1;
+    if (dfu_send_cmd("ramdisk")) return -1;
+
+    if (dfu_send_file(ctx->trustcache_img4)) return -1;
+    if (dfu_send_cmd("firmware")) return -1;
+
+    if (dfu_send_file(ctx->kernelcache_img4)) return -1;
+    if (dfu_send_cmd("bootx")) return -1;
+
+    log_info("Device should be booting now.");
+    return 0;
 }
 
 int ideviceenterramdisk_load(void)
