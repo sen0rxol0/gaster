@@ -9,9 +9,6 @@ echo "Install dependencies (packages)"
 brew install make autoconf automake pkg-config gnu-sed
 brew install libzip libtool
 
-echo "Download dependencies (embedded binaries)"
-SDK=$(xcrun -sdk ${matrix_os} --show-sdk-path)
-
 echo "Download dependencies (source code)"
 
 # git clone https://github.com/curl/curl.git
@@ -23,6 +20,7 @@ echo "Select correct Xcode"
 sudo xcode-select -s /Applications/Xcode_15.2.app
 
 echo "Setup environment"
+SDK=$(xcrun -sdk ${matrix_os} --show-sdk-path)
 NCPU=$(sysctl -n hw.ncpu)
 DESTDIR=$(pwd)/sysroot
 PREFIX=/usr/local
