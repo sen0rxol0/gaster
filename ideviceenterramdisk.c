@@ -343,10 +343,14 @@ static int stage_prepare(rdsk_ctx_t *ctx)
     return -1;
 
 found:
-    return run_cmd(
-        "bash -c 'rm -rf %s && mkdir -p %s %s'",
-        ctx->staging, ctx->mount, ctx->staging
-    ) ? 0 : -1;	
+
+    if (!run_cmd("bash -c 'rm -rf %s && mkdir -p %s %s'", ctx->staging, ctx->mount, ctx->staging))
+		return -1;
+	
+	if (!run_cmd("cp bootim@750x1334.im4p %s/", ctx->staging))
+		return -1;
+
+	return 0;
 }
 
 static int download_component(rdsk_ctx_t *ctx,
@@ -560,9 +564,6 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
     char shsh[PATH_MAX];
     build_shsh_path(ctx, shsh);
     im4m_from_shsh(shsh, ctx->im4m);
-
-	if (!run_cmd("cp bootim@750x1334.im4p %s/", ctx->staging))
-		return -1;
 
     return run_cmd(
         "cd %s && "
