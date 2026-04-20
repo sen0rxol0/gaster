@@ -93,6 +93,56 @@ static bool run_cmd(const char *fmt, ...)
 }
 
 
+void im4m_from_shsh(char *path, char *im4m_path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    fseek(f, 0, SEEK_END);
+    size_t size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* data = (char*)malloc(size);
+    if (data) fread(data, size, 1, f);
+    fclose(f);
+    plist_t shsh_plist = NULL;
+    plist_from_memory((const char*)data, (uint32_t)size, &shsh_plist, NULL);
+    plist_t ticket = plist_dict_get_item(shsh_plist, "ApImg4Ticket");
+    char *im4m = 0;
+    uint64_t im4m_size = 0;
+    plist_get_data_val(ticket, &im4m, &im4m_size);
+    f = fopen(im4m_path, "wb");
+    fwrite(im4m, 1, im4m_size, f);
+    fclose(f);
+}
+
+static void default_prog_cb(unsigned int progress) {
+
+	if(progress < 0) {
+		return;
+	}
+
+	if(progress > 100) {
+		progress = 100;
+	}
+
+	printf("\r[");
+
+	for(unsigned int i = 0; i < 50; i++) {
+		if(i < progress / 2) {
+			printf("=");
+		} else {
+			printf(" ");
+		}
+	}
+
+	printf("] %3.1d%%", progress);
+
+	fflush(stdout);
+
+	if(progress == 100) {
+		printf("\n");
+	}
+}
+
 static int stage_prepare_workspace(rdsk_ctx_t *ctx)
 {
     return run_cmd(
@@ -176,328 +226,172 @@ static int stage_decrypt(rdsk_ctx_t *ctx)
     return gastera1n_decrypt(ctx->ibss, out);
 }
 
-void
-im4m_from_shsh(char *path, char *im4m_path) {
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-    fseek(f, 0, SEEK_END);
-    size_t size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* data = (char*)malloc(size);
-    if (data) fread(data, size, 1, f);
-    fclose(f);
-    plist_t shsh_plist = NULL;
-    plist_from_memory((const char*)data, (uint32_t)size, &shsh_plist, NULL);
-    plist_t ticket = plist_dict_get_item(shsh_plist, "ApImg4Ticket");
-    char *im4m = 0;
-    uint64_t im4m_size = 0;
-    plist_get_data_val(ticket, &im4m, &im4m_size);
-    f = fopen(im4m_path, "wb");
-    fwrite(im4m, 1, im4m_size, f);
-    fclose(f);
+static int ensure_tool(const char *tool)
+{
+    if (access(tool, F_OK) == 0)
+        return 0;
+
+    return run_cmd(
+        "gunzip %s.gz && xattr -d com.apple.quarantine %s >/dev/null 2>&1 && chmod +x %s",
+        tool, tool, tool
+    ) ? 0 : -1;
 }
 
-
-static bool
-execute_command(char *command) {
-	log_debug("Executing command: %s\n", command);
-	FILE *fp;
-	fp = popen(command, "r");
-
-	if (fp == NULL) {
-		return false;
-	}
-
-  size_t line_sz = 130;
-	char line[line_sz];
-
-	while (fgets( line, line_sz, fp)){
-	  printf("%s", line);
-	}
-
-	pclose(fp);
-	return true;
+static void build_shsh_path(rdsk_ctx_t *ctx, char *out)
+{
+    sprintf(out, "%s/latest.shsh2", ctx->staging);
 }
 
-static void
-default_prog_cb(unsigned int progress) {
+static int stage_ensure_tools(void)
+{
+    if (ensure_tool("tsschecker_macOS_v440")) return -1;
 
-	if(progress < 0) {
-		return;
-	}
+    if (access("iBoot64Patcher.gz", F_OK) == 0)
+        if (ensure_tool("iBoot64Patcher")) return -1;
 
-	if(progress > 100) {
-		progress = 100;
-	}
+    if (ensure_tool("ldid2")) return -1;
 
-	printf("\r[");
+    if (access("restored_external.gz", F_OK) == 0)
+        if (!run_cmd("gunzip restored_external.gz")) return -1;
 
-	for(unsigned int i = 0; i < 50; i++) {
-		if(i < progress / 2) {
-			printf("=");
-		} else {
-			printf(" ");
-		}
-	}
-
-	printf("] %3.1d%%", progress);
-
-	fflush(stdout);
-
-	if(progress == 100) {
-		printf("\n");
-	}
+    return 0;
 }
 
-static int
-download_firmware_component(const char *component_path, const char *out_path) {
-	int ret;
-	fragmentzip_t *ipsw = fragmentzip_open(ipsw_url);
+static int stage_get_shsh(rdsk_ctx_t *ctx)
+{
+    char shsh[PATH_MAX];
+    build_shsh_path(ctx, shsh);
 
-	if (!ipsw) {
-		return -1;
-	}
+    if (access(shsh, F_OK) == 0)
+        return 0;
 
-	log_debug("Downloading %s, saving as: %s\n", component_path, out_path);
+    char *ecid  = idevicedfu_info("ecid");
+    char *ptype = idevicedfu_info("product_type");
+    char *model = idevicedfu_info("model");
 
-	ret = fragmentzip_download_file(ipsw, component_path, out_path, default_prog_cb);
-	fragmentzip_close(ipsw);
+    if (!run_cmd(
+        "./tsschecker_macOS_v440 -e %s -d %s -B %s -b -l -s --save-path %s",
+        ecid, ptype, model, ctx->staging))
+        return -1;
 
-	if(ret != 0) {
-		log_error("Unable to download firmware component: %s \n", component_path);
-		return -1;
-	}
-
-	return 0;
+    return run_cmd("mv %s/*shsh2 %s", ctx->staging, shsh) ? 0 : -1;
 }
 
+static int stage_patch_kernel(rdsk_ctx_t *ctx)
+{
+    char kdec[PATH_MAX];
+    char kpwn[PATH_MAX];
+    char diff[PATH_MAX];
 
-static int
-ideviceenterramdisk_downloadimages() {
-    log_info("Downloading firmware images...");
-	  int i = 0;
-    char *identifier = idevicedfu_info("product_type");
+    sprintf(kdec, "%s.dec", ctx->kernelcache);
+    sprintf(kpwn, "%s.pwn", ctx->kernelcache);
+    sprintf(diff, "%s/kc.bpatch", ctx->staging);
 
-    while(device_loaders[i].identifier != NULL) {
+    if (kernel64patcher_amfi(kdec, kpwn))
+        return -1;
 
-        if(!strcmp(device_loaders[i].identifier, identifier)) {
-    	       ipsw_loader = device_loaders[i];
-             break;
-        }
+    if (kerneldiff(kdec, kpwn, diff))
+        return -1;
 
-        i += 1;
-    }
-
-    if (ipsw_loader.ipsw_url) {
-
-		const char *kernelcache_path = ipsw_loader.kernelcache_path,\
-		*trustcache_path = ipsw_loader.trustcache_path,\
-		*ramdisk_path = ipsw_loader.ramdisk_path,\
-		*devicetree_path = ipsw_loader.devicetree_path,\
-		*iBEC_path = ipsw_loader.ibec_path,\
-		*iBSS_path = ipsw_loader.ibss_path;
-
-		ipsw_url = (char*)ipsw_loader.ipsw_url;
-    log_debug("Found IPSW loader : %s", ipsw_url);
-		int ret;
-		ret = download_firmware_component(kernelcache_path, kernelcache_save_path);
-
-		if (ret == 0) {
-  		  ret = download_firmware_component(trustcache_path, trustcache_save_path);
-
-  			if (ret == 0) {
-  				ret = download_firmware_component(ramdisk_path, ramdisk_save_path);
-
-  				if (ret == 0) {
-  					ret = download_firmware_component(devicetree_path, devicetree_save_path);
-
-  					if (ret == 0) {
-  						ret = download_firmware_component(iBEC_path, iBEC_save_path);
-
-  						if (ret == 0) {
-  							ret = download_firmware_component(iBSS_path, iBSS_save_path);
-  						}
-  					}
-  				}
-  			}
-  		}
-
-  		if (ret == 0) {
-  			return 0;
-  		}
-    }
-
-	return -1;
+    return 0;
 }
 
-static int
-ideviceenterramdisk_decryptimages() {
-    log_info("Decrypting downloaded images...");
-    char *dec_list[] = { kernelcache_save_path, trustcache_save_path, ramdisk_save_path, devicetree_save_path, NULL };
-  	char *cmd[CHAR_MAX];
-    int ret = 0,
-    i = 0;
+static int patch_iboot(const char *path, const char *extra)
+{
+    char in[PATH_MAX], out[PATH_MAX];
+    sprintf(in, "%s.dec", path);
+    sprintf(out,"%s.pwn", path);
 
-    while(dec_list[i] != NULL) {
-
-        if (ret != 0) {
-            return ret;
-        }
-
-        sprintf(cmd, "img4 -i %s -o %s.dec;", dec_list[i], dec_list[i]);
-
-        if (!execute_command(cmd)) {
-            ret = -1;
-        }
-
-        i += 1;
-    }
-
-    if (ret == 0) {
-        char *dec_save_path[sizeof iBEC_save_path + 5];
-        sprintf(dec_save_path, "%s.dec", iBEC_save_path);
-        ret = gastera1n_decrypt(iBEC_save_path, dec_save_path);
-
-        if (ret == 0) {
-            sprintf(dec_save_path, "%s.dec", iBSS_save_path);
-            ret = gastera1n_decrypt(iBSS_save_path, dec_save_path);
-        }
-    }
-
-	return ret;
+    if (extra)
+        return run_cmd("./iBoot64Patcher %s %s %s", in, out, extra) ? 0 : -1;
+    else
+        return run_cmd("./iBoot64Patcher %s %s", in, out) ? 0 : -1;
 }
 
-static int
-ideviceenterramdisk_patchimages()
+static int stage_patch_iboot(rdsk_ctx_t *ctx)
+{
+    if (patch_iboot(ctx->ibec, "-n -b \"rd=md0 -v\""))
+        return -1;
+
+    return patch_iboot(ctx->ibss, NULL);
+}
+
+static int stage_build_ramdisk(rdsk_ctx_t *ctx)
+{
+    if (access("ssh64.tar.gz", F_OK) != 0)
+        if (!run_cmd("cat ssh64.tar.gz* > ssh64.tar.gz"))
+            return -1;
+
+    if (!run_cmd(
+        "cp %s.dec %s/rdsk.dmg && "
+        "hdiutil resize -size 180MB %s/rdsk.dmg && "
+        "hdiutil attach %s/rdsk.dmg -mountpoint %s",
+        ctx->ramdisk, ctx->staging, ctx->staging,
+        ctx->staging, ctx->mount))
+        return -1;
+
+    if (!run_cmd("echo \"WELCOME BACK!\" > %s/etc/motd", ctx->mount))
+        return -1;
+
+    if (!run_cmd("mkdir -p %s/private/var/root %s/private/var/run",
+                 ctx->mount, ctx->mount))
+        return -1;
+
+    if (!run_cmd("tar -C %s -xf ssh64.tar.gz", ctx->mount))
+        return -1;
+
+    if (!run_cmd("hdiutil detach -force %s", ctx->mount))
+        return -1;
+
+    return run_cmd("hdiutil resize -sectors min %s/rdsk.dmg", ctx->staging)
+        ? 0 : -1;
+}
+
+static int stage_sign_restored_external(rdsk_ctx_t *ctx)
+{
+    return run_cmd(
+        "cp restored_external restored_external_hax && "
+        "./ldid2 -e %s/usr/local/bin/restored_external > restored_external.plist && "
+        "./ldid2 -M -Srestored_external.plist restored_external_hax && "
+        "mv restored_external_hax %s/usr/local/bin/restored_external",
+        ctx->mount, ctx->mount
+    ) ? 0 : -1;
+}
+
+static int stage_build_img4(rdsk_ctx_t *ctx)
+{
+    char shsh[PATH_MAX];
+    build_shsh_path(ctx, shsh);
+    im4m_from_shsh(shsh, ctx->im4m);
+
+    return run_cmd(
+        "cd %s && "
+        "img4 -i %s -o kernelcache.img4 -P kc.bpatch -M IM4M -T rkrn && "
+        "img4 -i %s -o trustcache.img4 -M IM4M -T rtsc && "
+        "img4 -i rdsk.dmg -o rdsk.img4 -M IM4M -A -T rdsk && "
+        "img4 -i %s -o dtree.img4 -M IM4M -T rdtr && "
+        "img4 -i %s.pwn -o ibec.img4 -A -M IM4M -T ibec && "
+        "img4 -i %s.pwn -o ibss.img4 -A -M IM4M -T ibss",
+        ctx->staging,
+        ctx->kernelcache,
+        ctx->trustcache,
+        ctx->devicetree,
+        ctx->ibec,
+        ctx->ibss
+    ) ? 0 : -1;
+}
+
+static int stage_patch(rdsk_ctx_t *ctx)
 {
     log_info("Patching images...");
-    char *cmd[CHAR_MAX];
 
-    if (access(tsschecker, F_OK) != 0) {
-        sprintf(cmd, "gunzip %s.gz; xattr -d com.apple.quarantine %s >/dev/null 2>&1; chmod +x %s", tsschecker, tsschecker, tsschecker);
-        execute_command(cmd);
-    }
-
-    char *ecid = idevicedfu_info("ecid");
-    char *shsh2_path[sizeof rdsk_staging_path + 14];
-    sprintf(shsh2_path, "%s/latest.shsh2", rdsk_staging_path);
-
-    if (access(shsh2_path, F_OK) != 0) {
-        sprintf(cmd, "./%s -e %s -d %s -B %s -b -l -s --save-path %s; mv %s/*shsh2 %s", tsschecker, ecid, idevicedfu_info("product_type"), idevicedfu_info("model"), rdsk_staging_path, rdsk_staging_path, shsh2_path);
-
-        if (!execute_command(cmd) || !(access(shsh2_path, F_OK) == 0)) {
-            return -1;
-        }
-    }
-
-    size_t kdec_size = sizeof kernelcache_save_path + 5;
-    char *kdec[kdec_size], *kpatched[kdec_size], *pdiff[sizeof rdsk_staging_path + 11];
-    sprintf(kdec, "%s.dec", kernelcache_save_path);
-    sprintf(kpatched, "%s.pwn", kernelcache_save_path);
-    sprintf(pdiff, "%s/kc.bpatch", rdsk_staging_path);
-
-    if (kernel64patcher_amfi(kdec, kpatched) != 0) {
-        return -1;
-    }
-
-    if (kerneldiff(kdec, kpatched, pdiff) != 0) {
-        return -1;
-    }
-
-    if (access("./iBoot64Patcher.gz", F_OK) == 0) {
-        execute_command("gunzip iBoot64Patcher.gz; xattr -d com.apple.quarantine iBoot64Patcher >/dev/null 2>&1; chmod +x iBoot64Patcher;");
-    }
-
-
-    sprintf(cmd, "./iBoot64Patcher %s.dec %s.pwn -n -b \"rd=md0 -v\"", iBEC_save_path, iBEC_save_path);
-
-    if(!execute_command(cmd)) {
-        return -1;
-    }
-
-    sprintf(cmd, "./iBoot64Patcher %s.dec %s.pwn", iBSS_save_path, iBSS_save_path);
-
-    if(!execute_command(cmd)) {
-        return -1;
-    }
-
-    if (access("ssh64.tar.gz", F_OK) != 0) {
-        // sprintf(cmd, "cat ssh64.tar.gz* > ssh64.tar.gz; rm ssh64.tar.gz_*;", rdsk_mount_path);
-        sprintf(cmd, "cat ssh64.tar.gz* > ssh64.tar.gz;", rdsk_mount_path);
-        execute_command(cmd);
-    }
-
-    if (access(ldid2, F_OK) != 0) {
-        sprintf(cmd, "gunzip %s.gz; xattr -d com.apple.quarantine %s >/dev/null 2>&1; chmod +x %s", ldid2, ldid2, ldid2);
-        execute_command(cmd);
-    }
-
-    if (access("restored_external.gz", F_OK) == 0) {
-        execute_command("gunzip restored_external.gz");
-    }
-
-    int cmd_list_len = 8;
-    char *commands[cmd_list_len][CHAR_MAX];
-
-    sprintf(cmd, "cd %s; cp %s.dec ./rdsk.dmg;\
-        hdiutil resize -size 180MB ./rdsk.dmg;\
-        hdiutil attach ./rdsk.dmg -mountpoint %s;\
-        sleep 5;", rdsk_staging_path, ramdisk_save_path, rdsk_mount_path);
-    strcpy(commands[0], cmd);
-    sprintf(cmd, "cd %s; echo \"WELCOME BACK!\" > ./etc/motd; mkdir -p ./private/var/root ./private/var/run ./sshd;", rdsk_mount_path);
-    strcpy(commands[1], cmd);
-    sprintf(cmd, "tar -C %s/sshd --preserve-permissions -xf ./ssh64.tar.gz;", rdsk_mount_path);
-    strcpy(commands[2], cmd);
-    sprintf(cmd, "cd %s/sshd; chmod 0755 ./bin/* && chmod 0755 ./usr/bin/* && chmod 0755 ./usr/sbin/* && chmod 0755 ./usr/local/bin/*;", rdsk_mount_path);
-    strcpy(commands[3], cmd);
-    sprintf(cmd, "cd %s/sshd; rsync --ignore-existing -auK . ../; sleep 2;", rdsk_mount_path);
-    strcpy(commands[4], cmd);
-    sprintf(cmd, "cd %s; rm -rf ./sshd ./usr/local/standalone/firmware/* ./usr/share/progressui ./usr/share/terminfo ./etc/apt/ ./etc/dpkg", rdsk_mount_path);
-    strcpy(commands[5], cmd);
-
-    sprintf(cmd, "cp ./restored_external ./restored_external_hax;\
-        ./%s -e %s/usr/local/bin/restored_external > ./restored_external.plist;\
-        ./%s -M -Srestored_external.plist ./restored_external_hax;\
-        rm ./restored_external.plist;\
-        mv ./restored_external_hax %s/usr/local/bin/restored_external;", ldid2, rdsk_mount_path, ldid2, rdsk_mount_path);
-    strcpy(commands[6], cmd);
-    sprintf(cmd, "hdiutil detach -force %s; sleep 5; hdiutil resize -sectors min %s/rdsk.dmg; sleep 3;", rdsk_mount_path, rdsk_staging_path);
-    strcpy(commands[7], cmd);
-
-    // int i;
-    for (int i = 0; i < cmd_list_len; i++) {
-
-        if (!execute_command(&commands[i])) {
-            return -1;
-        }
-    }
-
-    char* im4m_save_path[sizeof rdsk_staging_path + 6];
-    sprintf(im4m_save_path, "%s/IM4M", rdsk_staging_path);
-    im4m_from_shsh(shsh2_path, im4m_save_path);
-
-    if (access(im4m_save_path, F_OK) != 0) {
-        return -1;
-    }
-
-    sprintf(cmd, "cp bootim@750x1334.im4p %s/bootim.im4p; cd %s;\
-        img4 -i ./bootim.im4p -o ./bootim.img4 -M ./IM4M", rdsk_staging_path, rdsk_staging_path);
-
-    if (!execute_command(cmd)) {
-        return -1;
-    }
-
-    sprintf(cmd, "cd %s;\
-        img4 -i %s -o ./kernelcache.img4 -P ./kc.bpatch -M ./IM4M -T rkrn;\
-        img4 -i %s -o ./trustcache.img4 -M ./IM4M -T rtsc;\
-        img4 -i ./rdsk.dmg -o ./rdsk.img4 -M ./IM4M -A -T rdsk;\
-        img4 -i %s -o ./dtree.img4 -M ./IM4M -T rdtr;\
-        img4 -i %s.pwn -o ./ibec.img4 -A -M ./IM4M -T ibec;\
-        img4 -i %s.pwn -o ./ibss.img4 -A -M ./IM4M -T ibss;", rdsk_staging_path, kernelcache_save_path, trustcache_save_path, devicetree_save_path, iBEC_save_path, iBSS_save_path);
-
-    if (!execute_command(cmd)) {
-        return -1;
-    }
+    if (stage_ensure_tools()) return -1;
+    if (stage_get_shsh(ctx)) return -1;
+    if (stage_patch_kernel(ctx)) return -1;
+    if (stage_patch_iboot(ctx)) return -1;
+    if (stage_build_ramdisk(ctx)) return -1;
+    if (stage_sign_restored_external(ctx)) return -1;
+    if (stage_build_img4(ctx)) return -1;
 
     return 0;
 }
