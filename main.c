@@ -13,32 +13,12 @@
 
 #include "log.h"
 //
-#include "idevicedfu.h"
-#include "ideviceenterrecovery.h"
 #include "ideviceenterramdisk.h"
 #include "gastera1n.h"
 
 extern bool DEBUG_ENABLED;
 extern unsigned int ramdiskBootMode;
 int pwnDFUMode;
-
-static int
-idevicepwn() {
-
-	if (idevicedfu_find() != 0) {
-		return -1;
-	}
-
-	sleep(1);
-
-	return gastera1n();
-}
-
-static int
-idevicepwn_ramdisk() {
-	return ideviceenterramdisk_load();
-}
-
 
 int
 main(int argc, char **argv) {
@@ -101,25 +81,16 @@ main(int argc, char **argv) {
 	}
 
 	int ret = EXIT_SUCCESS;
-	ret = idevicepwn();
-
-	if (ret != 0) {
-		ret = ideviceenterrecovery();
+	ret = gastera1n();
+	
+	if (pwnDFUMode == 0 && ret == 0) {
+		log_info("Device reached pwned DFU mode.");
+		ret = ideviceenterramdisk_load();
 
 		if (ret == 0) {
-			sleep(9);
-			ret = idevicepwn();
+			printf("DONE !");
 		}
 	}
-
-	if (pwnDFUMode == 0 && ret == 0) {
-			log_info("Device reached pwned DFU mode.");
-			ret = idevicepwn_ramdisk();
-	}
-
-	if (ret == 0) {
-		printf("DONE !");
-	}
-
+	
 	return ret;
 }
