@@ -423,7 +423,6 @@ static int stage_patch(rdsk_ctx_t *ctx)
     if (stage_patch_kernel(ctx)) return -1;
     if (stage_patch_iboot(ctx)) return -1;
     if (stage_build_ramdisk(ctx)) return -1;
-    if (stage_sign_restored_external(ctx)) return -1;
     if (stage_build_img4(ctx)) return -1;
 
     return 0;
