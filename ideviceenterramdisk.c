@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -31,6 +32,14 @@ typedef struct {
     char ibec[PATH_MAX];
     char ibss[PATH_MAX];
 
+	char kernelcache_img4[PATH_MAX];
+	char trustcache_img4[PATH_MAX];
+	char ramdisk_img4[PATH_MAX];
+	char devicetree_img4[PATH_MAX];
+	char ibec_img4[PATH_MAX];
+	char ibss_img4[PATH_MAX];
+	char bootim_img4[PATH_MAX];
+
     char im4m[PATH_MAX];
 } rdsk_ctx_t;
 
@@ -49,6 +58,13 @@ static void ctx_init(rdsk_ctx_t *ctx)
     sprintf(ctx->ibec,        "%s/iBEC.im4p",           ctx->staging);
     sprintf(ctx->ibss,        "%s/iBSS.im4p",           ctx->staging);
     sprintf(ctx->im4m,        "%s/IM4M",                ctx->staging);
+
+	sprintf(ctx->kernelcache_img4, "%s/kernelcache.img4", ctx->staging);
+	sprintf(ctx->trustcache_img4,  "%s/trustcache.img4",  ctx->staging);
+	sprintf(ctx->ramdisk_img4,     "%s/rdsk.img4",        ctx->staging);
+	sprintf(ctx->devicetree_img4,  "%s/dtree.img4",       ctx->staging);
+	sprintf(ctx->ibec_img4,        "%s/ibec.img4",        ctx->staging);
+	sprintf(ctx->ibss_img4,        "%s/ibss.img4",        ctx->staging);
 }
 
 static bool run_cmd(const char *fmt, ...)
@@ -98,6 +114,43 @@ static void default_prog_cb(unsigned int progress) {
 	if(progress == 100) {
 		printf("\n");
 	}
+}
+
+
+int dfu_progress_cb(irecv_client_t client, const irecv_event_t* event) {
+	if (event->type == IRECV_PROGRESS) {
+
+        double progress = event->progress;
+        int i = 0;
+
+        if (progress < 0) {
+            return 0;
+        }
+
+        if (progress > 100) {
+            progress = 100;
+        }
+
+        printf("\r[");
+
+        for (i = 0; i < 50; i++) {
+            if (i < progress / 2) {
+                printf("=");
+            } else {
+                printf(" ");
+            }
+        }
+
+        printf("] %3.1f%%", progress);
+
+        fflush(stdout);
+
+        if (progress == 100) {
+            printf("\n");
+        }
+	}
+
+	return 0;
 }
 
 static char* dup_printf(const char *fmt, ...)
@@ -209,7 +262,7 @@ char* dfu_get_info(const char *t)
 int dfu_send_file(const char* filepath)
 {
     irecv_client_t client = dfu_open_client();
-    irecv_event_subscribe(client, IRECV_PROGRESS, &progress_cb, NULL);
+    irecv_event_subscribe(client, IRECV_PROGRESS, &dfu_progress_cb, NULL);
     irecv_error_t err = irecv_send_file(client, filepath,
                      IRECV_SEND_OPT_DFU_NOTIFY_FINISH);
     irecv_close(client);
@@ -245,26 +298,46 @@ void im4m_from_shsh(char *path, char *im4m_path)
     fclose(f);
 }
 
-static int stage_prepare_workspace(rdsk_ctx_t *ctx)
+static int ensure_tool(const char *tool)
 {
+    if (access(tool, F_OK) == 0)
+        return 0;
+
     return run_cmd(
-        "bash -c 'mkdir -p %s %s && rm -rf %s/*'",
-        ctx->staging, ctx->mount, ctx->staging
+        "gunzip %s.gz && xattr -d com.apple.quarantine %s >/dev/null 2>&1 && chmod +x %s",
+        tool, tool, tool
     ) ? 0 : -1;
 }
 
-static int stage_detect_loader(rdsk_ctx_t *ctx)
+static int stage_ensure_tools(void)
 {
-    char *identifier = idevicedfu_info("product_type");
+    if (ensure_tool("tsschecker_macOS_v440")) return -1;
 
-    for (int i = 0; device_loaders[i].identifier; i++) {
-        if (!strcmp(device_loaders[i].identifier, identifier)) {
-            ctx->loader = device_loaders[i];
-            ctx->ipsw_url = (char*)ctx->loader.ipsw_url;
-            return 0;
-        }
-    }
-    return -1;
+    if (access("iBoot64Patcher.gz", F_OK) == 0)
+        if (ensure_tool("iBoot64Patcher")) return -1;
+
+    if (ensure_tool("ldid2")) return -1;
+
+    if (access("restored_external.gz", F_OK) == 0)
+        if (!run_cmd("gunzip restored_external.gz")) return -1;
+
+    return 0;
+}
+
+static int stage_prepare(rdsk_ctx_t *ctx)
+{
+	char *identifier = idevicedfu_info("product_type");
+	
+	for (int i = 0; device_loaders[i].identifier; i++) {
+		if (!strcmp(device_loaders[i].identifier, identifier)) {
+			ctx->loader = device_loaders[i];
+			ctx->ipsw_url = (char*)ctx->loader.ipsw_url;
+		} else {
+			return -1;
+		}
+	}
+	
+	return run_cmd("bash -c 'rm -rf %s && mkdir -p %s %s'", ctx->staging, ctx->mount, ctx->staging) ? 0 : -1;	
 }
 
 static int download_component(rdsk_ctx_t *ctx,
@@ -302,11 +375,6 @@ static int stage_download_images(rdsk_ctx_t *ctx)
     return 0;
 }
 
-static int decrypt_img4(const char *path)
-{
-    return run_cmd("img4 -i %s -o %s.dec", path, path) ? 0 : -1;
-}
-
 static int stage_decrypt(rdsk_ctx_t *ctx)
 {
     const char *list[] = {
@@ -318,7 +386,7 @@ static int stage_decrypt(rdsk_ctx_t *ctx)
     };
 
     for (int i = 0; list[i]; i++)
-        if (decrypt_img4(list[i])) return -1;
+        if (run_cmd("img4 -i %s -o %s.dec", list[i], list[i])) return -1;
 
     char out[PATH_MAX];
     sprintf(out, "%s.dec", ctx->ibec);
@@ -328,35 +396,9 @@ static int stage_decrypt(rdsk_ctx_t *ctx)
     return gastera1n_decrypt(ctx->ibss, out);
 }
 
-static int ensure_tool(const char *tool)
-{
-    if (access(tool, F_OK) == 0)
-        return 0;
-
-    return run_cmd(
-        "gunzip %s.gz && xattr -d com.apple.quarantine %s >/dev/null 2>&1 && chmod +x %s",
-        tool, tool, tool
-    ) ? 0 : -1;
-}
-
 static void build_shsh_path(rdsk_ctx_t *ctx, char *out)
 {
     sprintf(out, "%s/latest.shsh2", ctx->staging);
-}
-
-static int stage_ensure_tools(void)
-{
-    if (ensure_tool("tsschecker_macOS_v440")) return -1;
-
-    if (access("iBoot64Patcher.gz", F_OK) == 0)
-        if (ensure_tool("iBoot64Patcher")) return -1;
-
-    if (ensure_tool("ldid2")) return -1;
-
-    if (access("restored_external.gz", F_OK) == 0)
-        if (!run_cmd("gunzip restored_external.gz")) return -1;
-
-    return 0;
 }
 
 static int stage_get_shsh(rdsk_ctx_t *ctx)
@@ -367,9 +409,9 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
     if (access(shsh, F_OK) == 0)
         return 0;
 
-    char *ecid  = idevicedfu_info("ecid");
-    char *ptype = idevicedfu_info("product_type");
-    char *model = idevicedfu_info("model");
+    char *ecid  = dfu_info("ecid");
+    char *ptype = dfu_info("product_type");
+    char *model = dfu_info("model");
 
     if (!run_cmd(
         "./tsschecker_macOS_v440 -e %s -d %s -B %s -b -l -s --save-path %s",
@@ -552,7 +594,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     if (gastera1n_reset() != 0)
         return -1;
 
-    sleep(1);
+    sleep(2);
 
     if (dfu_send_file(ctx->ibss_img4)) return -1;
     sleep(1);
@@ -589,13 +631,12 @@ int ideviceenterramdisk_load(void)
     ctx_init(&ctx);
 
     if (ramdiskBootMode == 1)
-        return ideviceenterramdisk_bootrd();
+        return stage_boot_ramdisk();
 
-    if (stage_prepare_workspace(&ctx))  return -1;
-    if (stage_detect_loader(&ctx))      return -1;
+    if (stage_prepare(&ctx))  return -1;
     if (stage_download_images(&ctx))    return -1;
     if (stage_decrypt(&ctx))            return -1;
     if (stage_patch(&ctx))              return -1;
 
-    return ideviceenterramdisk_bootrd();
+    return stage_boot_ramdisk();
 }
