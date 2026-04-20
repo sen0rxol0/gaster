@@ -63,6 +63,7 @@ static void ctx_init(rdsk_ctx_t *ctx)
 	sprintf(ctx->trustcache_img4,  "%s/trustcache.img4",  ctx->staging);
 	sprintf(ctx->ramdisk_img4,     "%s/rdsk.img4",        ctx->staging);
 	sprintf(ctx->devicetree_img4,  "%s/dtree.img4",       ctx->staging);
+	sprintf(ctx->bootim_img4,	   "%s/bootlogo.img4", 	  ctx->staging);
 	sprintf(ctx->ibec_img4,        "%s/ibec.img4",        ctx->staging);
 	sprintf(ctx->ibss_img4,        "%s/ibss.img4",        ctx->staging);
 }
@@ -560,12 +561,16 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
     build_shsh_path(ctx, shsh);
     im4m_from_shsh(shsh, ctx->im4m);
 
+	if (!run_cmd("cp bootim@750x1334.im4p %s/", ctx->staging))
+		return -1;
+
     return run_cmd(
         "cd %s && "
         "img4 -i %s -o kernelcache.img4 -P kc.bpatch -M IM4M -T rkrn && "
         "img4 -i %s -o trustcache.img4 -M IM4M -T rtsc && "
         "img4 -i rdsk.dmg -o rdsk.img4 -M IM4M -A -T rdsk && "
         "img4 -i %s -o dtree.img4 -M IM4M -T rdtr && "
+		"img4 -i bootim@750x1334.im4p -o bootlogo.img4 -A -M IM4M -T rlgo && "
         "img4 -i %s.pwn -o ibec.img4 -A -M IM4M -T ibec && "
         "img4 -i %s.pwn -o ibss.img4 -A -M IM4M -T ibss",
         ctx->staging,
