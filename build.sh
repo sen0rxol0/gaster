@@ -16,6 +16,13 @@ echo "Download dependencies (source code)"
 git clone https://github.com/madler/zlib.git
 git clone https://github.com/tihmstar/libgeneral.git
 git clone https://github.com/tihmstar/libfragmentzip.git
+# libplist and libirecovery are NOT statically linked — the host app owns the
+# canonical dylibs in its Frameworks bundle.  We build them as dylibs only so
+# the linker can resolve symbols and record the dependency load commands.
+git clone https://github.com/libimobiledevice/libplist.git
+git -C libplist checkout c5a30e9267068436a75b5d00fcbf95cb9c1f4dcd
+git clone https://github.com/libimobiledevice/libirecovery.git
+git -C libirecovery checkout 1b9d9c3cdd3ef2f38198a21c356352f13641482d
 
 echo "Select correct Xcode"
 sudo xcode-select -s /Applications/Xcode_15.2.app
@@ -83,6 +90,27 @@ gmake -j"${NCPU}"
 gmake -j"${NCPU}" install DESTDIR="${DESTDIR}"
 cd ..
 
+# Build libplist and libirecovery as dylibs only (no static archive).
+# The host application already ships the canonical dylibs in its Frameworks
+# bundle; we just need them present at link time and staged for the rpath.
+DYLIB_CONFIGURE_ARGS="--prefix=${PREFIX} --enable-shared --disable-static \
+    --build=x86_64-apple-darwin --host=${matrix_gnu_triple} \
+    --without-cython"
+
+echo "Build libplist (dylib)"
+cd libplist
+./autogen.sh ${DYLIB_CONFIGURE_ARGS}
+gmake -j"${NCPU}"
+gmake -j"${NCPU}" install DESTDIR="${DESTDIR}"
+cd ..
+
+echo "Build libirecovery (dylib)"
+cd libirecovery
+./autogen.sh ${DYLIB_CONFIGURE_ARGS}
+gmake -j"${NCPU}"
+gmake -j"${NCPU}" install DESTDIR="${DESTDIR}"
+cd ..
+
 ls -la
 
 echo "Build gastera1n"
@@ -93,6 +121,31 @@ cp -a "${DESTDIR}/${PREFIX}/lib"     libs_root/
 
 gmake -j"${NCPU}"
 mv gastera1n "${gastera1n}"
+
+# Rewrite the dylib load commands so they point to @rpath rather than the
+# build-time sysroot paths.  The Makefile adds -rpath @executable_path/../Frameworks
+# so the OS resolves these to Contents/Frameworks/ at runtime.
+echo "Fix install names in ${gastera1n}"
+for lib in libplist-2.0 libirecovery-1.0; do
+    # Find the actual dylib filename (versioned, e.g. libplist-2.0.4.dylib)
+    dylib_path=$(find "${LOCAL_LIB}" -name "${lib}*.dylib" ! -name '*-static*' | head -1)
+    if [ -z "${dylib_path}" ]; then
+        echo "WARNING: could not find dylib for ${lib}" >&2
+        continue
+    fi
+    dylib_file=$(basename "${dylib_path}")
+    # Change the load command recorded in the binary from the build-time
+    # absolute path to the @rpath-relative form the host app expects.
+    install_name_tool \
+        -change "${dylib_path}" \
+        "@rpath/${dylib_file}" \
+        "${gastera1n}"
+    # Also set the dylib's own install name so it matches what we embedded.
+    install_name_tool \
+        -id "@rpath/${dylib_file}" \
+        "${dylib_path}"
+done
+
 strip "${gastera1n}"
 
 # Select the architecture-appropriate tool archives
@@ -126,6 +179,19 @@ cp -v ../img4.gz \
       ../tsschecker_macOS_v440.gz \
       .
 cp -v "../${gastera1n}" ./gastera1n
+
+# Stage the dylibs that the host app must place in Contents/Frameworks/.
+# They are NOT bundled inside the gastera1n tool itself — this directory is
+# informational, showing the host app which dylibs it needs to vendor.
+mkdir -p Frameworks
+for lib in libplist-2.0 libirecovery-1.0; do
+    dylib_path=$(find "${LOCAL_LIB}" -name "${lib}*.dylib" ! -name '*-static*' | head -1)
+    if [ -n "${dylib_path}" ]; then
+        cp -v "${dylib_path}" Frameworks/
+    else
+        echo "WARNING: dylib for ${lib} not found, skipping" >&2
+    fi
+done
 cd ..
 
 tar -zcf "${release_dir}.tgz" "${release_dir}"
