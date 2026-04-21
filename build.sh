@@ -19,13 +19,17 @@ SRC_ROOT="${SRC_ROOT:-${WORK_ROOT}/src}"
 SYSROOT="${SYSROOT:-${WORK_ROOT}/sysroot}"
 RELEASE_ROOT="${RELEASE_ROOT:-${DIST_ROOT}/gastera1n-${TARGET_PLATFORM}-${TARGET_ARCH}_v1.0}"
 
-XCODE_APP="${XCODE_APP:-/Applications/Xcode_15.2.app}"
+XCODE_APP="${XCODE_APP:-/Applications/Xcode.app}"
 UNIVERSAL_BASE_ARCH="${UNIVERSAL_BASE_ARCH:-x86_64}"   # used only for the final merged package
 
 mkdir -p "${WORK_ROOT}" "${DIST_ROOT}"
 
 need_cmd() {
     command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+is_macho() {
+    file -b "$1" 2>/dev/null | grep -q 'Mach-O'
 }
 
 copy_tree() {
@@ -43,11 +47,6 @@ copy_tree() {
     fi
 }
 
-is_macho() {
-    local f="$1"
-    file -b "$f" 2>/dev/null | grep -q 'Mach-O'
-}
-
 clone_sources() {
     rm -rf "${SRC_ROOT}"
     mkdir -p "${SRC_ROOT}"
@@ -55,16 +54,21 @@ clone_sources() {
 
     log "Download dependencies (source code)"
     git clone https://github.com/madler/zlib.git
+    git -C zlib checkout "51b7f2abdade71cd9bb0e7a373ef2610ec6f9daf"
+    
     git clone https://github.com/tihmstar/libgeneral.git
+    git -C libgeneral checkout "2c3cce029bfb440859cb4affc37c03ada39a0604"
+    
     git clone https://github.com/tihmstar/libfragmentzip.git
+    git -C libfragmentzip checkout "92f184e631c7156113850afdb9c68a2d892e35b6"
 
     # libplist and libirecovery are built as dylibs on macOS so the host app can
     # vendor the canonical dylibs in its Frameworks bundle.
     git clone https://github.com/libimobiledevice/libplist.git
-    git -C libplist checkout c5a30e9267068436a75b5d00fcbf95cb9c1f4dcd
+    git -C libplist checkout "c5a30e9267068436a75b5d00fcbf95cb9c1f4dcd"
 
     git clone https://github.com/libimobiledevice/libirecovery.git
-    git -C libirecovery checkout 1b9d9c3cdd3ef2f38198a21c356352f13641482d
+    git -C libirecovery checkout "1b9d9c3cdd3ef2f38198a21c356352f13641482d"
 
     git clone https://github.com/xerub/img4lib.git
     git -C img4lib submodule update --init --recursive
@@ -154,7 +158,7 @@ install_macos_dependencies() {
     fi
     need_cmd brew
     log "Install dependencies (packages)"
-    brew install make autoconf automake pkg-config gnu-sed libzip libtool
+    brew install make autoconf automake pkg-config gnu-sed libzip libtool jq
 }
 
 build_zlib() {
