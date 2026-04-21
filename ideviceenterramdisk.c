@@ -254,7 +254,7 @@ typedef struct {
    that invoke these executables, eliminating the "unused variable" warning
    that the bare string literals caused under -Weverything. */
 #define TOOL_LDID2       "ldid2"
-#define TOOL_TSSCHECKER  "tsschecker_macOS_v440"
+#define TOOL_TSSCHECKER  "tsschecker"
 #define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
 
 static void ctx_init(rdsk_ctx_t *ctx)
