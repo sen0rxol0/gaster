@@ -21,12 +21,6 @@ LIBS += $(LIBS_DIR)/lib/libgeneral.a \
         $(LIBS_DIR)/lib/libfragmentzip.a \
         -lcurl -lpthread
 
-# libplist and libirecovery are shipped as dylibs inside the host
-# application's Frameworks bundle.  Link against them dynamically so the
-# linker records a dependency, but do NOT copy them here — the host app
-# already owns the canonical copies.
-LIBS += -lplist-2.0 -lirecovery-1.0
-
 ifeq ($(TARGET_OS),)
 TARGET_OS = $(shell uname -s)
 endif
@@ -37,16 +31,17 @@ CFLAGS += -mmacosx-version-min=10.13
 endif
 LDFLAGS += -Wl,-dead_strip
 LIBS    += -framework CoreFoundation -framework IOKit
-# Tell the dynamic linker to search the host app's Frameworks directory at
-# runtime.  When this binary is placed at Contents/MacOS/gastera1n the path
-# @executable_path/../Frameworks resolves to Contents/Frameworks/, where
-# libplist and libirecovery dylibs are expected to live.
-LDFLAGS += -Wl,-rpath,@executable_path/../Frameworks
-# Also provide the sysroot lib dir as a fallback search path at link time
-# so the build itself can locate the dylibs without them being in /usr/lib.
+# libplist and libirecovery live in the host app's Frameworks bundle.
+# Link dynamically so the linker records the load command; the host app
+# already owns the canonical dylibs — do NOT statically link them.
+LIBS    += -lplist-2.0 -lirecovery-1.0
+# Provide the sysroot lib dir so the linker can find the dylibs at build time.
 LDFLAGS += -L$(LIBS_DIR)/lib
+# Embed an LC_RPATH so dyld resolves the dylibs from Contents/Frameworks/
+# at runtime when the binary sits at Contents/MacOS/gastera1n.
+LDFLAGS += -Wl,-rpath,@executable_path/../Frameworks
 else
-# Linux
+# Linux — libplist and libirecovery are macOS-specific; omit them.
 CFLAGS  += -fdata-sections -ffunction-sections
 LDFLAGS += -static -no-pie -Wl,--gc-sections
 endif
