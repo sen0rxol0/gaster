@@ -255,6 +255,7 @@ typedef struct {
    that the bare string literals caused under -Weverything. */
 #define TOOL_LDID2       "ldid2"
 #define TOOL_TSSCHECKER  "tsschecker_macOS_v440"
+#define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
 
 static void ctx_init(rdsk_ctx_t *ctx)
 {
@@ -598,11 +599,10 @@ static int ensure_tool(const char *tool)
 static int stage_ensure_tools(void)
 {
     if (ensure_tool(TOOL_TSSCHECKER)) return -1;
-
-    if (access("iBoot64Patcher.gz", F_OK) == 0)
-        if (ensure_tool("iBoot64Patcher")) return -1;
-
+    
     if (ensure_tool(TOOL_LDID2)) return -1;
+    
+    if (ensure_tool(TOOL_IBOOT64PATCHER)) return -1;
 
     if (access("restored_external.gz", F_OK) == 0) {
         if (gunzip_file("restored_external.gz", "restored_external") != 0) {
@@ -719,7 +719,7 @@ static int stage_decrypt(rdsk_ctx_t *ctx)
     };
 
     for (int i = 0; list[i]; i++) {
-        if (!run_cmd("img4 -i %s -o %s.dec", list[i], list[i]))
+        if (!run_cmd("./img4 -i %s -o %s.dec", list[i], list[i]))
             return -1;
     }
 
@@ -758,11 +758,8 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    bool ok = run_cmd(
-        "./"
-        TOOL_TSSCHECKER
-        " -e %s -d %s -B %s -b -l -s --save-path %s",
-        ecid, ptype, model, ctx->staging
+    bool ok = run_cmd("./%s -e %s -d %s -B %s -b -l -s --save-path %s",
+        TOOL_TSSCHECKER, ecid, ptype, model, ctx->staging
     );
 
     free(ecid); free(ptype); free(model);
@@ -810,9 +807,9 @@ static int patch_iboot(const char *path, const char *extra)
     snprintf(out, sizeof(out), "%s.pwn", path);
 
     if (extra)
-        return run_cmd("./iBoot64Patcher %s %s %s", in, out, extra) ? 0 : -1;
+        return run_cmd("./%s %s %s %s", TOOL_IBOOT64PATCHER, in, out, extra) ? 0 : -1;
     else
-        return run_cmd("./iBoot64Patcher %s %s", in, out) ? 0 : -1;
+        return run_cmd("./%s %s %s", TOOL_IBOOT64PATCHER, in, out) ? 0 : -1;
 }
 
 static int stage_patch_iboot(rdsk_ctx_t *ctx)
@@ -837,16 +834,12 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     }
 
     /* ldid2 operations stay as shell calls — external binary. */
-    if (!run_cmd("./"
-                 TOOL_LDID2
-                 " -e %s > %s", dst_bin, plist)) {
+    if (!run_cmd("./%s -e %s > %s", TOOL_LDID2, dst_bin, plist)) {
         log_error("patch_restored_external: ldid2 -e failed\n");
         unlink(hax);
         return -1;
     }
-    if (!run_cmd("./"
-                 TOOL_LDID2
-                 " -M -S%s %s", plist, hax)) {
+    if (!run_cmd("./%s -M -S%s %s", TOOL_LDID2, plist, hax)) {
         log_error("patch_restored_external: ldid2 -M failed\n");
         unlink(hax); unlink(plist);
         return -1;
@@ -964,13 +957,13 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
 
     return run_cmd(
         "cd %s && "
-        "img4 -i %s -o kernelcache.img4 -P kc.bpatch -M IM4M -T rkrn && "
-        "img4 -i %s -o trustcache.img4 -M IM4M -T rtsc && "
-        "img4 -i rdsk.dmg -o rdsk.img4 -M IM4M -A -T rdsk && "
-        "img4 -i %s -o dtree.img4 -M IM4M -T rdtr && "
-        "img4 -i bootim@750x1334.im4p -o bootlogo.img4 -A -M IM4M -T rlgo && "
-        "img4 -i %s.pwn -o ibec.img4 -A -M IM4M -T ibec && "
-        "img4 -i %s.pwn -o ibss.img4 -A -M IM4M -T ibss",
+        "./img4 -i %s -o kernelcache.img4 -P kc.bpatch -M IM4M -T rkrn && "
+        "./img4 -i %s -o trustcache.img4 -M IM4M -T rtsc && "
+        "./img4 -i rdsk.dmg -o rdsk.img4 -M IM4M -A -T rdsk && "
+        "./img4 -i %s -o dtree.img4 -M IM4M -T rdtr && "
+        "./img4 -i bootim@750x1334.im4p -o bootlogo.img4 -A -M IM4M -T rlgo && "
+        "./img4 -i %s.pwn -o ibec.img4 -A -M IM4M -T ibec && "
+        "./img4 -i %s.pwn -o ibss.img4 -A -M IM4M -T ibss",
         ctx->staging,
         ctx->kernelcache,
         ctx->trustcache,
