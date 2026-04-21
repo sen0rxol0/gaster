@@ -39,7 +39,7 @@ LIBS    += -lplist-2.0 -lirecovery-1.0
 LDFLAGS += -L$(LIBS_DIR)/lib
 # Embed an LC_RPATH so dyld resolves the dylibs from Contents/Frameworks/
 # at runtime when the binary sits at Contents/MacOS/gastera1n.
-LDFLAGS += -Wl,-rpath,@executable_path/../Frameworks
+LDFLAGS += -Wl,-rpath,@executable_path/../../Frameworks
 else
 # Linux — libplist and libirecovery are macOS-specific; omit them.
 CFLAGS  += -fdata-sections -ffunction-sections
