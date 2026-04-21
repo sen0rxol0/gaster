@@ -878,11 +878,15 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     /* Resize the DMG to hold the SSH payload (requires hdiutil). */
     if (!run_cmd("hdiutil resize -size 180MB %s", rdsk_dmg))
         return -1;
-
+    
+    sleep(3);
+    
     /* mount */
     if (!run_cmd("hdiutil attach %s -mountpoint %s", rdsk_dmg, ctx->mount))
         return -1;
 
+    sleep(3);
+    
     /* All steps below this point must go through 'fail' to ensure detach. */
 #define RDSK_FAIL(msg) do { log_error(msg "\n"); goto fail; } while (0)
 
@@ -917,14 +921,14 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     /* cleanup unneeded files */
     if (!run_cmd(
-        "rm -rf %s/sshd "
-                "%s/usr/local/standalone/firmware/* "
-                "%s/usr/share/progressui "
-                "%s/usr/share/terminfo "
-                "%s/etc/apt "
-                "%s/etc/dpkg",
-        ctx->mount, ctx->mount, ctx->mount,
-        ctx->mount, ctx->mount, ctx->mount))
+        "cd %s && "
+        "rm -rf ./sshd "
+                "./usr/local/standalone/firmware/* "
+                "./usr/share/progressui "
+                "./usr/share/terminfo "
+                "./etc/apt "
+                "./etc/dpkg",
+        ctx->mount))
         RDSK_FAIL("stage_build_ramdisk: cleanup failed");
 
     if (patch_restored_external_in_ramdisk(ctx))
@@ -934,11 +938,15 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     if (!run_cmd("hdiutil detach -force %s", ctx->mount))
         RDSK_FAIL("stage_build_ramdisk: hdiutil detach failed");
 
+    sleep(3);
+
     /* shrink to minimal */
     if (!run_cmd("hdiutil resize -sectors min %s/rdsk.dmg", ctx->staging)) {
         log_error("stage_build_ramdisk: hdiutil resize failed\n");
         return -1;
     }
+
+    sleep(1);
 
 #undef RDSK_FAIL
     return 0;
