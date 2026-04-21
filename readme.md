@@ -30,6 +30,6 @@ https://github.com/verygenericname/kerneldiff_C
 https://github.com/synackuk/belladonna
 https://github.com/libimobiledevice/libirecovery
 https://github.com/libimobiledevice/libplist
-thttps://github.com/ProcursusTeam/ldid
-thttps://github.com/realnp/ibootim
+https://github.com/ProcursusTeam/ldid
+https://github.com/realnp/ibootim
 https://github.com/1Conan/tsschecker
