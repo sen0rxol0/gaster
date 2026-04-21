@@ -122,30 +122,26 @@ cp -a "${DESTDIR}/${PREFIX}/lib"     libs_root/
 gmake -j"${NCPU}"
 mv gastera1n "${gastera1n}"
 
-# Rewrite the dylib load commands so they point to @rpath rather than the
-# build-time sysroot paths.  The Makefile adds -rpath @executable_path/../Frameworks
-# so the OS resolves these to Contents/Frameworks/ at runtime.
+# Rewrite dylib load commands BEFORE stripping — strip can invalidate the
+# symbol table that install_name_tool needs to locate LC_LOAD_DYLIB entries.
 echo "Fix install names in ${gastera1n}"
 for lib in libplist-2.0 libirecovery-1.0; do
-    # Find the actual dylib filename (versioned, e.g. libplist-2.0.4.dylib)
     dylib_path=$(find "${LOCAL_LIB}" -name "${lib}*.dylib" ! -name '*-static*' | head -1)
     if [ -z "${dylib_path}" ]; then
         echo "WARNING: could not find dylib for ${lib}" >&2
         continue
     fi
     dylib_file=$(basename "${dylib_path}")
-    # Change the load command recorded in the binary from the build-time
-    # absolute path to the @rpath-relative form the host app expects.
     install_name_tool \
         -change "${dylib_path}" \
         "@rpath/${dylib_file}" \
         "${gastera1n}"
-    # Also set the dylib's own install name so it matches what we embedded.
     install_name_tool \
         -id "@rpath/${dylib_file}" \
         "${dylib_path}"
 done
 
+# Strip AFTER install_name_tool so load commands are not corrupted.
 strip "${gastera1n}"
 
 # Select the architecture-appropriate tool archives
