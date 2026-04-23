@@ -11,9 +11,11 @@
 #     as shared libraries inside its own bundle/package.  This script therefore
 #     links *against* those ABI-stable dylibs/SOs but does NOT copy them into
 #     the release tree.
-#   • Companion pre-built tool archives (img4, ldid2, iBoot64Patcher,
-#     tsschecker) are expected in ROOT_DIR with the naming convention described
-#     in stage_release_tree().
+#   • img4 is built from source (img4lib) and placed into the release tree
+#     directly from the per-arch sysroot.
+#   • Companion pre-built tool archives (ldid2, iBoot64Patcher, tsschecker)
+#     are expected in ROOT_DIR with the naming convention described in
+#     stage_release_tree().
 #
 # Usage:
 #   ./build.sh [TARGET_PLATFORM] [TARGET_ARCH]
@@ -262,6 +264,9 @@ build_static_libs() {
     local platform="$1"
     local common_args=(--prefix="${PREFIX}" --host="${HOST_TRIPLE}")
 
+    # Build order matters: libgeneral <- libplist <- libfragmentzip (needs both)
+    #                                 <- libirecovery (needs libplist)
+
     build_zlib
 
     log "Building libgeneral (static)"
@@ -269,18 +274,13 @@ build_static_libs() {
         "${common_args[@]}" \
         --disable-shared --enable-static
 
-    log "Building libfragmentzip (static)"
-    build_autotools "${_SRC_ROOT}/libfragmentzip" \
-        "${common_args[@]}" \
-        --disable-shared --enable-static
-
     # -----------------------------------------------------------------------
-    # libplist and libirecovery:
-    #   Built only to produce headers + .pc files so gastera1n can compile
-    #   and the linker can resolve symbols.  The actual shared library used
-    #   at runtime is the one already embedded in the host application.
-    #   We remove the static archives afterwards to prevent accidental static
-    #   linking.
+    # libplist:
+    #   Required by libfragmentzip and libirecovery.  Built only to produce
+    #   headers + .pc files for compile/link resolution; the actual shared
+    #   library at runtime is the one embedded in the host application.
+    #   The static archive is removed after install to prevent accidental
+    #   static linking against it.
     # -----------------------------------------------------------------------
     log "Building libplist ${LIBPLIST_VERSION} (headers/pkgconfig only)"
     build_autotools "${_SRC_ROOT}/libplist" \
@@ -289,6 +289,16 @@ build_static_libs() {
     rm -f "${_SYSROOT}${PREFIX}/lib/libplist"*.a \
           "${_SYSROOT}${PREFIX}/lib/libplist"*.la
 
+    # libfragmentzip depends on libgeneral and libplist – both must be built first.
+    log "Building libfragmentzip (static)"
+    build_autotools "${_SRC_ROOT}/libfragmentzip" \
+        "${common_args[@]}" \
+        --disable-shared --enable-static
+
+    # -----------------------------------------------------------------------
+    # libirecovery:
+    #   Depends on libplist headers.  Same headers/pkgconfig-only treatment.
+    # -----------------------------------------------------------------------
     log "Building libirecovery ${LIBIRECOVERY_VERSION} (headers/pkgconfig only)"
     build_autotools "${_SRC_ROOT}/libirecovery" \
         "${common_args[@]}" \
@@ -403,17 +413,20 @@ fix_linux_strip() {
 # ---------------------------------------------------------------------------
 # Companion tool archive helpers
 #
-# Expected archive naming in ROOT_DIR:
+# img4 is built from source (img4lib) and placed directly into the release
+# tree from the sysroot; it is NOT expected as a pre-built archive here.
+#
+# Expected archive naming in ROOT_DIR for the remaining tools:
 #
 #   <tool>_macOS_arm64.gz     <tool>_macOS_x86_64.gz
 #   <tool>_linux_x86_64.gz   <tool>_linux_arm64.gz
 #
-# where <tool> ∈ { img4, ldid2, iBoot64Patcher, tsschecker }
+# where <tool> ∈ { ldid2, iBoot64Patcher, tsschecker }
 #
 # A platform-only fallback (e.g. tsschecker_macOS.gz) is accepted when no
 # arch-specific archive exists.
 #
-# The release tree layout for tool archives:
+# The release tree layout:
 #
 #   tools/
 #     macos/
@@ -428,7 +441,8 @@ fix_linux_strip() {
 _tool_archives_for() {
     local platform="$1"
     local arch="$2"
-    local tools=(img4 ldid2 iBoot64Patcher tsschecker)
+    # img4 is built from source – excluded from this list deliberately.
+    local tools=(ldid2 iBoot64Patcher tsschecker)
     local t
     for t in "${tools[@]}"; do
         if   [[ -f "${ROOT_DIR}/${t}_${platform}_${arch}.gz" ]]; then
@@ -467,10 +481,19 @@ stage_release_tree() {
 
     install -m 755 "${gastera1n_bin}" "${release_dir}/gastera1n"
 
-    # Companion tool archives
+    # Companion tools directory
     local tools_dir="${release_dir}/tools/${platform}/${arch}"
     mkdir -p "${tools_dir}"
 
+    # img4 is built from source; install the binary directly from the sysroot.
+    local img4_bin="${_SYSROOT}${PREFIX}/bin/img4"
+    if [[ -x "${img4_bin}" ]]; then
+        install -m 755 "${img4_bin}" "${tools_dir}/img4"
+    else
+        warn "img4 binary not found in sysroot -- skipping"
+    fi
+
+    # Pre-built tool archives (ldid2, iBoot64Patcher, tsschecker)
     local archive
     while IFS= read -r archive; do
         [[ -n "${archive}" ]] || continue
