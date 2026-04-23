@@ -43,8 +43,7 @@
 #include "ideviceloaders.h"
 #include "gastera1n.h"
 #include "kernel64patcher.h"
-
-#include "kerneldiff.c"          /* kerneldiff() declaration – no longer #include'd as .c */
+#include "kerneldiff.h"          /* kerneldiff() declaration – no longer #include'd as .c */
 
 #include <plist/plist.h>
 #include <libfragmentzip/libfragmentzip.h>
@@ -525,7 +524,11 @@ static void ctx_init(rdsk_ctx_t *ctx)
  * Progress callbacks
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-static void default_prog_cb(unsigned int progress)
+/*
+ * render_progress – single progress bar renderer used by all callers.
+ * progress is clamped to [0, 100] before display.
+ */
+static void render_progress(unsigned int progress)
 {
     if (progress > 100) progress = 100;
 
@@ -538,22 +541,23 @@ static void default_prog_cb(unsigned int progress)
     if (progress == 100) printf("\n");
 }
 
+/* fragmentzip download callback – signature matches fragmentzip_progress_t. */
+static void fragzip_progress_cb(unsigned int progress)
+{
+    render_progress(progress);
+}
+
+/* irecovery event callback – extracts the progress value and delegates. */
 int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
 {
     (void)client;
     if (event->type != IRECV_PROGRESS) return 0;
 
-    double progress = event->progress;
-    if (progress < 0)   progress = 0;
-    if (progress > 100) progress = 100;
+    double p = event->progress;
+    if (p < 0)   p = 0;
+    if (p > 100) p = 100;
 
-    printf("\r[");
-    for (int i = 0; i < 50; i++)
-        printf(i < (int)(progress / 2) ? "=" : " ");
-    printf("] %3.1f%%", progress);
-    fflush(stdout);
-
-    if (progress == 100) printf("\n");
+    render_progress((unsigned int)p);
     return 0;
 }
 
@@ -873,7 +877,7 @@ static int download_component(rdsk_ctx_t *ctx,
     if (!ipsw) return -1;
 
     log_info("Downloading %s", remote);
-    int r = fragmentzip_download_file(ipsw, remote, local, default_prog_cb);
+    int r = fragmentzip_download_file(ipsw, remote, local, fragzip_progress_cb);
     fragmentzip_close(ipsw);
     return r;
 }
