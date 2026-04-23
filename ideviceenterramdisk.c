@@ -1,3 +1,27 @@
+/*
+ * ideviceenterramdisk.c
+ *
+ * Orchestrates the full gastera1n SSH-ramdisk boot flow:
+ *   prepare → download → decrypt → patch → boot
+ *
+ * Tool resolution
+ * ───────────────
+ * img4 is built as part of this project and resolved at runtime via
+ * g_tool_dir (set once by ideviceenterramdisk_set_tool_dir()).  The
+ * companion pre-built tools (ldid2, iBoot64Patcher, tsschecker) are
+ * expected in the same directory as img4, decompressed on first use by
+ * ensure_tool().
+ *
+ * Shell usage
+ * ───────────
+ * popen() is retained only for calls that are irreducibly shell-based
+ * (hdiutil, tar, rsync) or that invoke the external tool binaries whose
+ * stdout must be captured (ldid2 -e).  All file-system operations use
+ * the native C helpers defined below.  Tool arguments are passed through
+ * exec_tool() which bypasses /bin/sh entirely, eliminating shell-
+ * injection risk on paths that contain spaces.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
@@ -8,28 +32,79 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/param.h>
+#include <sys/wait.h>
 #include <zlib.h>
 #ifdef __APPLE__
-#include <sys/xattr.h>
+#  include <sys/xattr.h>
 #endif
 
 #include "log.h"
 #include "ideviceenterramdisk.h"
 #include "ideviceloaders.h"
-
 #include "gastera1n.h"
 #include "kernel64patcher.h"
+
+#include "kerneldiff.c"          /* kerneldiff() declaration – no longer #include'd as .c */
 
 #include <plist/plist.h>
 #include <libfragmentzip/libfragmentzip.h>
 #include <libirecovery.h>
 
-#include "kerneldiff.c"
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Constants
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#define STAGING_DIR      "/tmp/gastera1n_rdsk"
+#define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
+
+/* Seconds to wait after hdiutil attach/detach so the kernel can settle. */
+#define SLEEP_HDIUTIL_ATTACH  3
+#define SLEEP_HDIUTIL_DETACH  3
+#define SLEEP_AFTER_RESIZE    1
+/* Seconds between DFU send steps to let iBSS/iBEC negotiate. */
+#define SLEEP_IBSS_AFTER_SEND 1
+#define SLEEP_IBEC_AFTER_SEND 1
+#define SLEEP_AFTER_GO        5
+/* Reset recovery before boot. */
+#define SLEEP_AFTER_RESET     2
+
+/* Tool binary base-names. */
+#define TOOL_IMG4            "img4"
+#define TOOL_LDID2           "ldid2"
+#define TOOL_TSSCHECKER      "tsschecker"
+#define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
 
 
-/* ── Native C helpers (replace shell popen calls) ──────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Global tool directory
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Recursively remove a directory tree (mirrors `rm -rf`). */
+/*
+ * Set once at start-up by the host application via
+ * ideviceenterramdisk_set_tool_dir().  All tool paths are resolved
+ * relative to this directory.
+ */
+static char g_tool_dir[PATH_MAX] = ".";
+
+void ideviceenterramdisk_set_tool_dir(const char *dir)
+{
+    snprintf(g_tool_dir, sizeof(g_tool_dir), "%s", dir);
+}
+
+/* Build the absolute path for a named tool into out (size PATH_MAX). */
+static void tool_path(const char *name, char *out)
+{
+    snprintf(out, PATH_MAX, "%s/%s", g_tool_dir, name);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Native C file-system helpers
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Recursively remove a directory tree (mirrors `rm -rf`).
+   Returns 0 on success or if path does not exist, -1 on error. */
 static int rm_rf(const char *path)
 {
     struct stat st;
@@ -56,7 +131,7 @@ static int rm_rf(const char *path)
 }
 
 /* Create a directory and all missing parents (mirrors `mkdir -p`).
-   Returns 0 if the directory exists or was created, -1 on error. */
+   Returns 0 if the directory already exists or was created, -1 on error. */
 static int mkdir_p(const char *path, mode_t mode)
 {
     char tmp[PATH_MAX];
@@ -74,18 +149,18 @@ static int mkdir_p(const char *path, mode_t mode)
     return (mkdir(tmp, mode) != 0 && errno != EEXIST) ? -1 : 0;
 }
 
-/* Copy src → dst as a plain binary file.  Returns 0 on success, -1 on error.
-   Mirrors `cp src dst`. */
+/* Binary file copy (mirrors `cp src dst`).
+   Preserves source permissions.  Returns 0 on success, -1 on error. */
 static int file_copy(const char *src, const char *dst)
 {
     FILE *in = fopen(src, "rb");
     if (!in) {
-        log_error("file_copy: cannot open %s: %s\n", src, strerror(errno));
+        log_error("file_copy: cannot open '%s': %s\n", src, strerror(errno));
         return -1;
     }
     FILE *out = fopen(dst, "wb");
     if (!out) {
-        log_error("file_copy: cannot create %s: %s\n", dst, strerror(errno));
+        log_error("file_copy: cannot create '%s': %s\n", dst, strerror(errno));
         fclose(in);
         return -1;
     }
@@ -95,46 +170,45 @@ static int file_copy(const char *src, const char *dst)
     int ret = 0;
     while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
         if (fwrite(buf, 1, n, out) != n) {
-            log_error("file_copy: write error on %s: %s\n", dst, strerror(errno));
+            log_error("file_copy: write error on '%s': %s\n", dst, strerror(errno));
             ret = -1;
             break;
         }
     }
-    if (!feof(in)) { ret = -1; }
+    if (!feof(in)) ret = -1;
 
-    /* Preserve source permissions on the copy. */
     struct stat st;
     if (ret == 0 && fstat(fileno(in), &st) == 0)
         fchmod(fileno(out), st.st_mode & 0777);
 
     fclose(in);
     fclose(out);
+    if (ret != 0) unlink(dst);
     return ret;
 }
 
-/* Decompress a gzip-compressed file src.gz → dst.
-   Removes the .gz source on success (mirrors `gunzip src.gz`).
+/* Decompress gz_path → out_path using zlib.
+   Removes gz_path on success (mirrors `gunzip`).
    Returns 0 on success, -1 on error. */
 static int gunzip_file(const char *gz_path, const char *out_path)
 {
     gzFile gz = gzopen(gz_path, "rb");
     if (!gz) {
-        log_error("gunzip_file: cannot open %s\n", gz_path);
+        log_error("gunzip_file: cannot open '%s'\n", gz_path);
         return -1;
     }
     FILE *out = fopen(out_path, "wb");
     if (!out) {
-        log_error("gunzip_file: cannot create %s: %s\n", out_path, strerror(errno));
+        log_error("gunzip_file: cannot create '%s': %s\n", out_path, strerror(errno));
         gzclose(gz);
         return -1;
     }
 
     char buf[65536];
-    int n;
-    int ret = 0;
+    int n, ret = 0;
     while ((n = gzread(gz, buf, sizeof(buf))) > 0) {
         if (fwrite(buf, 1, (size_t)n, out) != (size_t)n) {
-            log_error("gunzip_file: write error on %s\n", out_path);
+            log_error("gunzip_file: write error on '%s'\n", out_path);
             ret = -1;
             break;
         }
@@ -149,54 +223,53 @@ static int gunzip_file(const char *gz_path, const char *out_path)
     gzclose(gz);
 
     if (ret == 0)
-        unlink(gz_path); /* mirror gunzip behaviour: remove the .gz */
+        unlink(gz_path);   /* mirror gunzip: remove the .gz source */
     else
-        unlink(out_path); /* clean up partial output */
+        unlink(out_path);  /* clean up partial output */
 
     return ret;
 }
 
-/* Make a file executable and strip the macOS quarantine xattr.
-   Mirrors `chmod +x path && xattr -d com.apple.quarantine path`. */
+/* Make path executable and strip the macOS quarantine xattr. */
 static int make_executable(const char *path)
 {
     struct stat st;
     if (stat(path, &st) != 0) {
-        log_error("make_executable: stat failed for %s: %s\n", path, strerror(errno));
+        log_error("make_executable: stat '%s': %s\n", path, strerror(errno));
         return -1;
     }
     if (chmod(path, st.st_mode | S_IXUSR | S_IXGRP | S_IXOTH) != 0) {
-        log_error("make_executable: chmod failed for %s: %s\n", path, strerror(errno));
+        log_error("make_executable: chmod '%s': %s\n", path, strerror(errno));
         return -1;
     }
 #ifdef __APPLE__
-    /* Ignore ENOATTR — the xattr may not be present. */
+    /* ENOATTR means the quarantine xattr is simply absent — not an error. */
     if (removexattr(path, "com.apple.quarantine", 0) != 0 && errno != ENOATTR)
-        log_error("make_executable: removexattr warning for %s: %s\n", path, strerror(errno));
+        log_error("make_executable: removexattr warning for '%s': %s\n",
+                  path, strerror(errno));
 #endif
     return 0;
 }
 
-/* Write a single line to a file (mirrors `echo 'text' > path`). */
+/* Write a single text line to path (mirrors `echo 'line' > path`). */
 static int file_write_line(const char *path, const char *line)
 {
     FILE *f = fopen(path, "w");
     if (!f) {
-        log_error("file_write_line: cannot open %s: %s\n", path, strerror(errno));
+        log_error("file_write_line: cannot open '%s': %s\n", path, strerror(errno));
         return -1;
     }
-    int ret = (fputs(line, f) == EOF) ? -1 : 0;
-    if (ret == 0 && fputc('\n', f) == EOF) ret = -1;
+    int ret = (fputs(line, f) == EOF || fputc('\n', f) == EOF) ? -1 : 0;
     fclose(f);
     return ret;
 }
 
-/* Find the newest file matching a prefix+suffix in a directory.
-   Fills best_path (size PATH_MAX) with the winner.
+/* Find the file with a given suffix that has the newest mtime in dir.
+   Writes the absolute path into best_path (size PATH_MAX).
    Returns 0 if found, -1 if nothing matched. */
 static int find_newest_file(const char *dir,
-                             const char *suffix,
-                             char *best_path)
+                            const char *suffix,
+                            char *best_path)
 {
     DIR *d = opendir(dir);
     if (!d) return -1;
@@ -213,8 +286,10 @@ static int find_newest_file(const char *dir,
 
         char full[PATH_MAX];
         snprintf(full, sizeof(full), "%s/%s", dir, ent->d_name);
+
         struct stat st;
         if (stat(full, &st) != 0) continue;
+
         if (st.st_mtime > best_mtime) {
             best_mtime = st.st_mtime;
             snprintf(best_path, PATH_MAX, "%s", full);
@@ -224,14 +299,179 @@ static int find_newest_file(const char *dir,
     return (best_path[0] != '\0') ? 0 : -1;
 }
 
-/* ── End native C helpers ───────────────────────────────────────────────── */
+/* Allocate a formatted string.  Caller must free(). */
+static char *dup_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int len = vsnprintf(NULL, 0, fmt, ap);
+    va_end(ap);
+
+    char *buf = malloc((size_t)len + 1);
+    if (!buf) return NULL;
+
+    va_start(ap, fmt);
+    vsnprintf(buf, (size_t)len + 1, fmt, ap);
+    va_end(ap);
+    return buf;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Process execution helpers
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * exec_tool – fork/exec a tool with an argv list, without /bin/sh.
+ *
+ * argv[0] must be the absolute path of the executable.
+ * The variadic list must be terminated with a NULL sentinel.
+ * stdout/stderr of the child are inherited from the parent.
+ *
+ * Returns 0 on success (exit status 0), -1 otherwise.
+ *
+ * This is the preferred way to invoke img4, ldid2, iBoot64Patcher, and
+ * tsschecker.  Using execv rather than popen()/system() eliminates shell
+ * injection risk when paths or arguments contain spaces or special chars.
+ */
+static int exec_tool(const char *path, ...)
+{
+    /* Count arguments and build argv. */
+    va_list ap;
+    int argc = 1; /* path itself */
+    va_start(ap, path);
+    while (va_arg(ap, const char *) != NULL) argc++;
+    va_end(ap);
+
+    const char **argv = malloc(((size_t)argc + 1) * sizeof(char *));
+    if (!argv) return -1;
+
+    argv[0] = path;
+    va_start(ap, path);
+    for (int i = 1; i <= argc; i++)
+        argv[i] = va_arg(ap, const char *);
+    va_end(ap);
+    /* argv[argc] is NULL from the sentinel va_arg read above. */
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        log_error("exec_tool: fork failed: %s\n", strerror(errno));
+        free(argv);
+        return -1;
+    }
+
+    if (pid == 0) {
+        execv(path, (char *const *)argv);
+        /* execv only returns on error. */
+        _exit(127);
+    }
+
+    free(argv);
+
+    int status;
+    if (waitpid(pid, &status, 0) < 0) {
+        log_error("exec_tool: waitpid failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        log_error("exec_tool: '%s' exited with status %d\n",
+                  path, WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * shell_cmd – run an arbitrary shell command via popen(), streaming its
+ * output to stdout.  Use only for calls that genuinely require /bin/sh
+ * features (pipelines, redirects, globs) or macOS-specific tools such as
+ * hdiutil, tar, rsync.
+ *
+ * Returns 0 on success (exit status 0), -1 otherwise.
+ */
+static int shell_cmd(const char *fmt, ...)
+{
+    char cmd[4096];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(cmd, sizeof(cmd), fmt, ap);
+    va_end(ap);
+
+    log_debug("shell: %s\n", cmd);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) {
+        log_error("shell_cmd: popen failed for: %s\n", cmd);
+        return -1;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), fp))
+        fputs(line, stdout);
+
+    int status = pclose(fp);
+    if (status != 0) {
+        log_error("shell_cmd: command exited with status %d: %s\n", status, cmd);
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * shell_cmd_capture – like shell_cmd but returns the full stdout as a
+ * heap-allocated string (caller must free()).  Returns NULL on failure.
+ * Used solely for `ldid2 -e` whose output must be redirected to a file
+ * in a race-free way.
+ */
+static char *shell_cmd_capture(const char *fmt, ...)
+{
+    char cmd[4096];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(cmd, sizeof(cmd), fmt, ap);
+    va_end(ap);
+
+    log_debug("shell_capture: %s\n", cmd);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return NULL;
+
+    char *out = NULL;
+    size_t cap = 0, len = 0;
+    char buf[4096];
+    size_t n;
+
+    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
+        if (len + n + 1 > cap) {
+            cap = (cap + n + 1) * 2;
+            char *tmp = realloc(out, cap);
+            if (!tmp) { free(out); pclose(fp); return NULL; }
+            out = tmp;
+        }
+        memcpy(out + len, buf, n);
+        len += n;
+    }
+
+    if (out) out[len] = '\0';
+    if (pclose(fp) != 0) { free(out); return NULL; }
+    return out;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Context
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
 typedef struct {
     device_loader loader;
     char *ipsw_url;
 
+    /* Staging / mount directories */
     char staging[PATH_MAX];
     char mount[PATH_MAX];
 
+    /* Raw (im4p) downloads */
     char kernelcache[PATH_MAX];
     char trustcache[PATH_MAX];
     char ramdisk[PATH_MAX];
@@ -239,6 +479,7 @@ typedef struct {
     char ibec[PATH_MAX];
     char ibss[PATH_MAX];
 
+    /* Final img4 payloads */
     char kernelcache_img4[PATH_MAX];
     char trustcache_img4[PATH_MAX];
     char ramdisk_img4[PATH_MAX];
@@ -250,145 +491,99 @@ typedef struct {
     char im4m[PATH_MAX];
 } rdsk_ctx_t;
 
-/* Tool binary names — single source of truth used in all run_cmd() calls
-   that invoke these executables, eliminating the "unused variable" warning
-   that the bare string literals caused under -Weverything. */
-#define TOOL_LDID2       "ldid2"
-#define TOOL_TSSCHECKER  "tsschecker"
-#define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
-
 static void ctx_init(rdsk_ctx_t *ctx)
 {
-    /* FIX #9: use snprintf throughout to prevent overflow if staging prefix
-       were ever made dynamic. Sizes are sizeof each field (all PATH_MAX). */
-    snprintf(ctx->staging, sizeof(ctx->staging), "/tmp/gastera1n_rdsk");
-    snprintf(ctx->mount,   sizeof(ctx->mount),   "/tmp/gastera1n_rdsk/dmg_mountpoint");
+    memset(ctx, 0, sizeof(*ctx));
 
-    snprintf(ctx->kernelcache, sizeof(ctx->kernelcache), "%s/kernelcache.release", ctx->staging);
-    snprintf(ctx->trustcache,  sizeof(ctx->trustcache),  "%s/dmg.trustcache",      ctx->staging);
-    snprintf(ctx->ramdisk,     sizeof(ctx->ramdisk),     "%s/ramdisk.dmg",         ctx->staging);
-    snprintf(ctx->devicetree,  sizeof(ctx->devicetree),  "%s/DeviceTree.im4p",     ctx->staging);
-    snprintf(ctx->ibec,        sizeof(ctx->ibec),        "%s/iBEC.im4p",           ctx->staging);
-    snprintf(ctx->ibss,        sizeof(ctx->ibss),        "%s/iBSS.im4p",           ctx->staging);
-    snprintf(ctx->im4m,        sizeof(ctx->im4m),        "%s/IM4M",                ctx->staging);
+    snprintf(ctx->staging, sizeof(ctx->staging), STAGING_DIR);
+    snprintf(ctx->mount,   sizeof(ctx->mount),   MOUNT_DIR);
 
-    snprintf(ctx->kernelcache_img4, sizeof(ctx->kernelcache_img4), "%s/kernelcache.img4", ctx->staging);
-    snprintf(ctx->trustcache_img4,  sizeof(ctx->trustcache_img4),  "%s/trustcache.img4",  ctx->staging);
-    snprintf(ctx->ramdisk_img4,     sizeof(ctx->ramdisk_img4),     "%s/rdsk.img4",        ctx->staging);
-    snprintf(ctx->devicetree_img4,  sizeof(ctx->devicetree_img4),  "%s/dtree.img4",       ctx->staging);
-    snprintf(ctx->bootim_img4,      sizeof(ctx->bootim_img4),      "%s/bootlogo.img4",    ctx->staging);
-    snprintf(ctx->ibec_img4,        sizeof(ctx->ibec_img4),        "%s/ibec.img4",        ctx->staging);
-    snprintf(ctx->ibss_img4,        sizeof(ctx->ibss_img4),        "%s/ibss.img4",        ctx->staging);
+#define STAGE(field, name) \
+    snprintf(ctx->field, sizeof(ctx->field), "%s/" name, ctx->staging)
+
+    STAGE(kernelcache,      "kernelcache.release");
+    STAGE(trustcache,       "dmg.trustcache");
+    STAGE(ramdisk,          "ramdisk.dmg");
+    STAGE(devicetree,       "DeviceTree.im4p");
+    STAGE(ibec,             "iBEC.im4p");
+    STAGE(ibss,             "iBSS.im4p");
+    STAGE(im4m,             "IM4M");
+
+    STAGE(kernelcache_img4, "kernelcache.img4");
+    STAGE(trustcache_img4,  "trustcache.img4");
+    STAGE(ramdisk_img4,     "rdsk.img4");
+    STAGE(devicetree_img4,  "dtree.img4");
+    STAGE(bootim_img4,      "bootlogo.img4");
+    STAGE(ibec_img4,        "ibec.img4");
+    STAGE(ibss_img4,        "ibss.img4");
+
+#undef STAGE
 }
 
-static bool run_cmd(const char *fmt, ...)
-{
-    char cmd[4096];
-    va_list args;
-    va_start(args, fmt);
-    vsnprintf(cmd, sizeof(cmd), fmt, args);
-    va_end(args);
 
-    log_debug("Executing: %s\n", cmd);
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Progress callbacks
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return false;
-
-    char line[256];
-    while (fgets(line, sizeof(line), fp))
-        fputs(line, stdout);
-
-    return pclose(fp) == 0;
-}
-
-/* FIX #8: progress is unsigned int; the (progress < 0) guard was dead code
-   and triggered -Wtype-limits. Removed the dead branch. */
 static void default_prog_cb(unsigned int progress)
 {
-    if (progress > 100)
-        progress = 100;
+    if (progress > 100) progress = 100;
 
     printf("\r[");
-
-    for (unsigned int i = 0; i < 50; i++) {
-        if (i < progress / 2)
-            printf("=");
-        else
-            printf(" ");
-    }
-
+    for (unsigned int i = 0; i < 50; i++)
+        printf(i < progress / 2 ? "=" : " ");
     printf("] %3u%%", progress);
     fflush(stdout);
 
-    if (progress == 100)
-        printf("\n");
+    if (progress == 100) printf("\n");
 }
 
 int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
 {
-    if (event->type == IRECV_PROGRESS) {
-        double progress = event->progress;
+    (void)client;
+    if (event->type != IRECV_PROGRESS) return 0;
 
-        if (progress < 0) return 0;
-        if (progress > 100) progress = 100;
+    double progress = event->progress;
+    if (progress < 0)   progress = 0;
+    if (progress > 100) progress = 100;
 
-        printf("\r[");
-        for (int i = 0; i < 50; i++) {
-            if (i < progress / 2) printf("=");
-            else                   printf(" ");
-        }
-        printf("] %3.1f%%", progress);
-        fflush(stdout);
+    printf("\r[");
+    for (int i = 0; i < 50; i++)
+        printf(i < (int)(progress / 2) ? "=" : " ");
+    printf("] %3.1f%%", progress);
+    fflush(stdout);
 
-        if (progress == 100) printf("\n");
-    }
+    if (progress == 100) printf("\n");
     return 0;
 }
 
-static char *dup_printf(const char *fmt, ...)
-{
-    va_list ap;
-    va_start(ap, fmt);
-    int len = vsnprintf(NULL, 0, fmt, ap);
-    va_end(ap);
 
-    char *buf = malloc(len + 1);
-    if (!buf) return NULL;
-    va_start(ap, fmt);
-    vsnprintf(buf, len + 1, fmt, ap);
-    va_end(ap);
-
-    return buf;
-}
+/* ═══════════════════════════════════════════════════════════════════════════
+ * DFU / irecovery helpers
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 static irecv_client_t dfu_open_client(void)
 {
-    uint64_t ecid = 0;
     irecv_client_t client = NULL;
-    /* FIX #3c: declare err before the loop so it remains in scope for the
-       i==5 error path; declaring inside the loop body left it out of scope
-       at the bottom-of-loop check, which is undefined behaviour. */
     irecv_error_t err = IRECV_E_SUCCESS;
 
     for (int i = 0; i <= 5; i++) {
-        log_debug("Attempting to connect...\n");
+        log_debug("Attempting to connect to DFU device...\n");
+        err = irecv_open_with_ecid(&client, 0);
 
-        err = irecv_open_with_ecid(&client, ecid);
         if (err == IRECV_E_UNSUPPORTED) {
-            log_error("%s\n", irecv_strerror(err));
+            log_error("irecv: %s\n", irecv_strerror(err));
             return NULL;
-        } else if (err != IRECV_E_SUCCESS) {
-            sleep(1);
-        } else {
-            break;
         }
+        if (err == IRECV_E_SUCCESS) break;
+
+        sleep(1);
 
         if (i == 5) {
-            log_error("%s\n", irecv_strerror(err));
+            log_error("irecv: %s\n", irecv_strerror(err));
             return NULL;
         }
     }
-
     return client;
 }
 
@@ -396,38 +591,36 @@ int dfu_wait_for_device(void)
 {
     log_info("Searching for DFU mode device...");
 
-    irecv_device_t device = NULL;
     irecv_client_t client = dfu_open_client();
+    if (!client) return -1;
 
-    /* FIX #2: guard against NULL client before any use */
-    if (!client)
-        return -1;
-
+    irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
 
-    /* FIX #5: close client whether or not device was found */
     if (!device) {
         irecv_close(client);
         return -1;
     }
 
-    irecv_error_t error = irecv_setenv(client, "auto-boot", "true");
-    if (error != IRECV_E_SUCCESS)
-        log_error("%s\n", irecv_strerror(error));
+    irecv_error_t err = irecv_setenv(client, "auto-boot", "true");
+    if (err != IRECV_E_SUCCESS)
+        log_error("irecv_setenv: %s\n", irecv_strerror(err));
 
-    error = irecv_saveenv(client);
-    if (error != IRECV_E_SUCCESS)
-        log_error("%s\n", irecv_strerror(error));
+    err = irecv_saveenv(client);
+    if (err != IRECV_E_SUCCESS)
+        log_error("irecv_saveenv: %s\n", irecv_strerror(err));
 
     irecv_close(client);
     return 0;
 }
 
-/* FIX #1 (caller side): callers must free() the returned string.
-   FIX #2: guard against NULL client / devinfo before dereferencing. */
-char *dfu_get_info(const char *t)
+/*
+ * dfu_get_info – return a heap-allocated string for the given key.
+ * Caller must free().  Returns NULL on error.
+ */
+char *dfu_get_info(const char *key)
 {
-    log_debug("Getting device info: %s", t);
+    log_debug("Getting device info: %s\n", key);
 
     irecv_client_t client = dfu_open_client();
     if (!client) {
@@ -441,29 +634,25 @@ char *dfu_get_info(const char *t)
 
     char *info = NULL;
 
-    if (!strcmp(t, "ecid") && devinfo)
+    if (!strcmp(key, "ecid") && devinfo)
         info = dup_printf("0x%016llX", devinfo->ecid);
-
-    else if (!strcmp(t, "cpid") && devinfo)
+    else if (!strcmp(key, "cpid") && devinfo)
         info = dup_printf("0x%04X", devinfo->cpid);
-
-    else if (!strcmp(t, "product_type") && device)
+    else if (!strcmp(key, "product_type") && device)
         info = strdup(device->product_type);
-
-    else if (!strcmp(t, "model") && device)
+    else if (!strcmp(key, "model") && device)
         info = strdup(device->hardware_model);
 
     irecv_close(client);
 
     if (info)
-        log_debug("%s\n", info);
+        log_debug("  %s = %s\n", key, info);
     else
-        log_error("dfu_get_info: unknown key or missing device info: %s\n", t);
+        log_error("dfu_get_info: unknown key or missing device info: %s\n", key);
 
     return info;
 }
 
-/* FIX #2: guard against NULL client. */
 int dfu_send_file(const char *filepath)
 {
     irecv_client_t client = dfu_open_client();
@@ -473,10 +662,9 @@ int dfu_send_file(const char *filepath)
     irecv_error_t err = irecv_send_file(client, filepath,
                                         IRECV_SEND_OPT_DFU_NOTIFY_FINISH);
     irecv_close(client);
-    return err == IRECV_E_SUCCESS ? 0 : -1;
+    return (err == IRECV_E_SUCCESS) ? 0 : -1;
 }
 
-/* FIX #2: guard against NULL client. */
 int dfu_send_cmd(const char *command)
 {
     irecv_client_t client = dfu_open_client();
@@ -484,22 +672,27 @@ int dfu_send_cmd(const char *command)
 
     irecv_error_t err = irecv_send_command(client, command);
     irecv_close(client);
-    return err == IRECV_E_SUCCESS ? 0 : -1;
+    return (err == IRECV_E_SUCCESS) ? 0 : -1;
 }
 
-/* FIX #4: check plist parse result, check that ticket key exists,
-   avoid writing an empty file on parse failure, free allocated memory. */
-static int im4m_from_shsh(const char *path, const char *im4m_path)
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * SHSH / IM4M helpers
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Extract ApImg4Ticket from a .shsh2 plist file and write it to im4m_path. */
+static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
 {
-    FILE *f = fopen(path, "rb");
+    FILE *f = fopen(shsh_path, "rb");
     if (!f) {
-        log_error("im4m_from_shsh: cannot open %s\n", path);
+        log_error("im4m_from_shsh: cannot open '%s': %s\n",
+                  shsh_path, strerror(errno));
         return -1;
     }
 
     fseek(f, 0, SEEK_END);
     size_t size = (size_t)ftell(f);
-    fseek(f, 0, SEEK_SET);
+    rewind(f);
 
     char *data = malloc(size);
     if (!data) {
@@ -509,7 +702,7 @@ static int im4m_from_shsh(const char *path, const char *im4m_path)
     }
 
     if (fread(data, 1, size, f) != size) {
-        log_error("im4m_from_shsh: short read on %s\n", path);
+        log_error("im4m_from_shsh: short read on '%s'\n", shsh_path);
         free(data);
         fclose(f);
         return -1;
@@ -521,13 +714,13 @@ static int im4m_from_shsh(const char *path, const char *im4m_path)
     free(data);
 
     if (!shsh_plist) {
-        log_error("im4m_from_shsh: failed to parse plist from %s\n", path);
+        log_error("im4m_from_shsh: failed to parse plist from '%s'\n", shsh_path);
         return -1;
     }
 
     plist_t ticket = plist_dict_get_item(shsh_plist, "ApImg4Ticket");
     if (!ticket) {
-        log_error("im4m_from_shsh: ApImg4Ticket key not found in %s\n", path);
+        log_error("im4m_from_shsh: ApImg4Ticket key not found in '%s'\n", shsh_path);
         plist_free(shsh_plist);
         return -1;
     }
@@ -544,77 +737,85 @@ static int im4m_from_shsh(const char *path, const char *im4m_path)
 
     f = fopen(im4m_path, "wb");
     if (!f) {
-        log_error("im4m_from_shsh: cannot write %s\n", im4m_path);
+        log_error("im4m_from_shsh: cannot write '%s': %s\n",
+                  im4m_path, strerror(errno));
         free(im4m);
         plist_free(shsh_plist);
         return -1;
     }
 
-    if (fwrite(im4m, 1, im4m_size, f) != im4m_size) {
-        log_error("im4m_from_shsh: short write to %s\n", im4m_path);
-        fclose(f);
-        free(im4m);
-        plist_free(shsh_plist);
-        return -1;
+    int ret = 0;
+    if (fwrite(im4m, 1, (size_t)im4m_size, f) != (size_t)im4m_size) {
+        log_error("im4m_from_shsh: short write to '%s'\n", im4m_path);
+        ret = -1;
     }
+
     fclose(f);
-
     free(im4m);
     plist_free(shsh_plist);
-    return 0;
+    return ret;
 }
 
-/* Native C replacement for:
-     gunzip tool.gz && xattr -d com.apple.quarantine tool && chmod +x tool
-   Uses zlib (gunzip_file) + make_executable helper — no shell subprocess. */
-static int ensure_tool(const char *tool)
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Tool management
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * ensure_tool – decompress <name>.gz if the binary is not yet present,
+ * then make it executable.  Paths are resolved relative to g_tool_dir.
+ */
+static int ensure_tool(const char *name)
 {
-    if (access(tool, X_OK) == 0)
-        return 0;
+    char bin[PATH_MAX], gz[PATH_MAX];
+    tool_path(name, bin);
+    snprintf(gz, sizeof(gz), "%s.gz", bin);
 
-    char gz_path[PATH_MAX];
-    snprintf(gz_path, sizeof(gz_path), "%s.gz", tool);
+    if (access(bin, X_OK) == 0) return 0;   /* already ready */
 
-    if (access(gz_path, F_OK) == 0) {
-        log_info("Decompressing %s.gz", tool);
-        if (gunzip_file(gz_path, tool) != 0) {
-            log_error("ensure_tool: failed to decompress %s.gz\n", tool);
+    if (access(gz, F_OK) == 0) {
+        log_info("Decompressing %s.gz", name);
+        if (gunzip_file(gz, bin) != 0) {
+            log_error("ensure_tool: failed to decompress '%s'\n", gz);
             return -1;
         }
     }
 
-    if (make_executable(tool) != 0) {
-        log_error("ensure_tool: failed to make %s executable\n", tool);
+    if (make_executable(bin) != 0) {
+        log_error("ensure_tool: failed to make '%s' executable\n", bin);
         return -1;
     }
 
-    if (access(tool, X_OK) != 0) {
-        log_error("ensure_tool: %s still not executable after setup\n", tool);
+    if (access(bin, X_OK) != 0) {
+        log_error("ensure_tool: '%s' still not executable\n", bin);
         return -1;
     }
-
     return 0;
 }
 
 static int stage_ensure_tools(void)
 {
-    if (ensure_tool(TOOL_TSSCHECKER)) return -1;
-    
-    if (ensure_tool(TOOL_LDID2)) return -1;
-    
-    if (ensure_tool(TOOL_IBOOT64PATCHER)) return -1;
+    if (ensure_tool(TOOL_IMG4)           != 0) return -1;
+    if (ensure_tool(TOOL_LDID2)          != 0) return -1;
+    if (ensure_tool(TOOL_IBOOT64PATCHER) != 0) return -1;
+    if (ensure_tool(TOOL_TSSCHECKER)     != 0) return -1;
 
-    if (access("restored_external.gz", F_OK) == 0) {
+    /* restored_external is a data file, not a tool — decompress separately. */
+    if (access("restored_external", F_OK) != 0 &&
+        access("restored_external.gz", F_OK) == 0) {
         if (gunzip_file("restored_external.gz", "restored_external") != 0) {
             log_error("stage_ensure_tools: failed to decompress restored_external.gz\n");
             return -1;
         }
     }
-
     return 0;
 }
 
-/* FIX #1: free strings returned by dfu_get_info(). */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stage: prepare
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
 static int stage_prepare(rdsk_ctx_t *ctx)
 {
     char *identifier = dfu_get_info("product_type");
@@ -626,36 +827,29 @@ static int stage_prepare(rdsk_ctx_t *ctx)
     int found = 0;
     for (int i = 0; device_loaders[i].identifier; i++) {
         if (!strcmp(device_loaders[i].identifier, identifier)) {
-            ctx->loader = device_loaders[i];
+            ctx->loader   = device_loaders[i];
             ctx->ipsw_url = (char *)ctx->loader.ipsw_url;
             found = 1;
             break;
         }
     }
-
-    if (!found) {
-        log_error("Unsupported device: %s\n", identifier);
-        free(identifier);
-        return -1;
-    }
-
     free(identifier);
 
-    /* Native C: remove stale staging dir, recreate staging + mountpoint. */
-    if (rm_rf(ctx->staging) != 0 && errno != ENOENT) {
-        log_error("stage_prepare: failed to remove %s\n", ctx->staging);
-        return -1;
-    }
-    if (mkdir_p(ctx->staging, 0755) != 0) {
-        log_error("stage_prepare: failed to create %s\n", ctx->staging);
-        return -1;
-    }
-    if (mkdir_p(ctx->mount, 0755) != 0) {
-        log_error("stage_prepare: failed to create %s\n", ctx->mount);
+    if (!found) {
+        log_error("stage_prepare: unsupported device\n");
         return -1;
     }
 
-    /* Native C: copy boot image into staging directory. */
+    /* Clean up any leftover staging directory then re-create it. */
+    if (rm_rf(ctx->staging) != 0 && errno != ENOENT) {
+        log_error("stage_prepare: failed to remove '%s'\n", ctx->staging);
+        return -1;
+    }
+    if (mkdir_p(ctx->staging, 0755) != 0 || mkdir_p(ctx->mount, 0755) != 0) {
+        log_error("stage_prepare: failed to create staging directories\n");
+        return -1;
+    }
+
     char bootim_dst[PATH_MAX];
     snprintf(bootim_dst, sizeof(bootim_dst),
              "%s/bootim@750x1334.im4p", ctx->staging);
@@ -663,9 +857,13 @@ static int stage_prepare(rdsk_ctx_t *ctx)
         log_error("stage_prepare: failed to copy boot image\n");
         return -1;
     }
-
     return 0;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stage: download
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 static int download_component(rdsk_ctx_t *ctx,
                               const char *remote,
@@ -682,10 +880,7 @@ static int download_component(rdsk_ctx_t *ctx,
 
 static int stage_download_images(rdsk_ctx_t *ctx)
 {
-    struct {
-        const char *remote;
-        const char *local;
-    } files[] = {
+    struct { const char *remote; const char *local; } files[] = {
         { ctx->loader.kernelcache_path, ctx->kernelcache },
         { ctx->loader.trustcache_path,  ctx->trustcache  },
         { ctx->loader.ramdisk_path,     ctx->ramdisk     },
@@ -696,57 +891,66 @@ static int stage_download_images(rdsk_ctx_t *ctx)
     };
 
     for (int i = 0; files[i].remote; i++)
-        if (download_component(ctx, files[i].remote, files[i].local))
+        if (download_component(ctx, files[i].remote, files[i].local) != 0)
             return -1;
-
     return 0;
 }
 
-/* FIX #3: run_cmd() returns true on success, false on failure.
-   The original code used `if (run_cmd(...)) return -1` which returned -1
-   on SUCCESS. All img4 decrypt calls now use `if (!run_cmd(...)) return -1`.
 
-   FIX #3 also: the iBEC/iBSS calls used gastera1n_decrypt() which follows
-   normal C convention (0 = success), so those were correct and are unchanged. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stage: decrypt
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Decrypt one im4p file using the built img4 tool (exec_tool, no shell). */
+static int img4_decrypt(const char *img4_bin, const char *in, const char *out)
+{
+    return exec_tool(img4_bin, "-i", in, "-o", out, NULL);
+}
+
 static int stage_decrypt(rdsk_ctx_t *ctx)
 {
-    const char *list[] = {
-        ctx->kernelcache,
-        ctx->trustcache,
-        ctx->ramdisk,
-        ctx->devicetree,
-        NULL
+    char img4_bin[PATH_MAX];
+    tool_path(TOOL_IMG4, img4_bin);
+
+    /* Kernel, trustcache, ramdisk, devicetree – decrypted via img4. */
+    struct { const char *in; } plain[] = {
+        { ctx->kernelcache },
+        { ctx->trustcache  },
+        { ctx->ramdisk     },
+        { ctx->devicetree  },
+        { NULL }
     };
 
-    for (int i = 0; list[i]; i++) {
-        if (!run_cmd("./img4 -i %s -o %s.dec", list[i], list[i]))
+    for (int i = 0; plain[i].in; i++) {
+        char out[PATH_MAX];
+        snprintf(out, sizeof(out), "%s.dec", plain[i].in);
+        if (img4_decrypt(img4_bin, plain[i].in, out) != 0) {
+            log_error("stage_decrypt: img4 failed on '%s'\n", plain[i].in);
             return -1;
+        }
     }
 
-    char out[PATH_MAX];
-    snprintf(out, sizeof(out), "%s.dec", ctx->ibec);
-    if (gastera1n_decrypt(ctx->ibec, out)) return -1;
+    /* iBEC / iBSS – decrypted via gastera1n_decrypt (handles GID key). */
+    char ibec_dec[PATH_MAX], ibss_dec[PATH_MAX];
+    snprintf(ibec_dec, sizeof(ibec_dec), "%s.dec", ctx->ibec);
+    snprintf(ibss_dec, sizeof(ibss_dec), "%s.dec", ctx->ibss);
 
-    snprintf(out, sizeof(out), "%s.dec", ctx->ibss);
-    return gastera1n_decrypt(ctx->ibss, out);
+    if (gastera1n_decrypt(ctx->ibec, ibec_dec) != 0) return -1;
+    if (gastera1n_decrypt(ctx->ibss, ibss_dec) != 0) return -1;
+    return 0;
 }
 
-static void build_shsh_path(rdsk_ctx_t *ctx, char *out)
-{
-    snprintf(out, PATH_MAX, "%s/latest.shsh2", ctx->staging);
-}
 
-/* FIX #1: free strings returned by dfu_get_info().
-   FIX #6: use a glob-safe rename: sort by modification time and pick the
-   newest .shsh2 rather than relying on shell glob expansion which breaks
-   when multiple files are present. */
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stage: patch
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
 static int stage_get_shsh(rdsk_ctx_t *ctx)
 {
     char shsh[PATH_MAX];
-    build_shsh_path(ctx, shsh);
+    snprintf(shsh, sizeof(shsh), "%s/latest.shsh2", ctx->staging);
 
-    if (access(shsh, F_OK) == 0)
-        return 0;
+    if (access(shsh, F_OK) == 0) return 0;  /* already saved */
 
     char *ecid  = dfu_get_info("ecid");
     char *ptype = dfu_get_info("product_type");
@@ -758,23 +962,38 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    bool ok = run_cmd("./%s -e %s -d %s -B %s -b -l -s --save-path %s",
-        TOOL_TSSCHECKER, ecid, ptype, model, ctx->staging
-    );
+    char tss_bin[PATH_MAX];
+    tool_path(TOOL_TSSCHECKER, tss_bin);
 
+    /*
+     * tsschecker writes .shsh2 files with non-deterministic names; we tell
+     * it to save into ctx->staging then locate the newest one below.
+     *
+     * exec_tool is used here because tsschecker takes simple flag arguments
+     * with no shell quoting concerns.
+     */
+    int ret = exec_tool(tss_bin,
+                        "-e", ecid,
+                        "-d", ptype,
+                        "-B", model,
+                        "-b", "-l", "-s",
+                        "--save-path", ctx->staging,
+                        NULL);
     free(ecid); free(ptype); free(model);
 
-    if (!ok) return -1;
+    if (ret != 0) {
+        log_error("stage_get_shsh: tsschecker failed\n");
+        return -1;
+    }
 
-    /* Native C: find the newest .shsh2 in staging, rename to canonical path.
-       Replaces the fragile `ls -t | head -1 | mv` shell pipeline. */
+    /* Locate the newest .shsh2 and rename it to a canonical path. */
     char newest[PATH_MAX];
     if (find_newest_file(ctx->staging, ".shsh2", newest) != 0) {
-        log_error("stage_get_shsh: no .shsh2 file found in %s\n", ctx->staging);
+        log_error("stage_get_shsh: no .shsh2 file found in '%s'\n", ctx->staging);
         return -1;
     }
     if (rename(newest, shsh) != 0) {
-        log_error("stage_get_shsh: rename %s -> %s failed: %s\n",
+        log_error("stage_get_shsh: rename '%s' → '%s': %s\n",
                   newest, shsh, strerror(errno));
         return -1;
     }
@@ -783,114 +1002,139 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
 
 static int stage_patch_kernel(rdsk_ctx_t *ctx)
 {
-    char kdec[PATH_MAX];
-    char kpwn[PATH_MAX];
-    char diff[PATH_MAX];
+    char kdec[PATH_MAX], kpwn[PATH_MAX], diff[PATH_MAX];
+    snprintf(kdec, sizeof(kdec), "%s.dec",          ctx->kernelcache);
+    snprintf(kpwn, sizeof(kpwn), "%s.pwn",          ctx->kernelcache);
+    snprintf(diff, sizeof(diff), "%s/kc.bpatch",    ctx->staging);
 
-    snprintf(kdec, sizeof(kdec), "%s.dec", ctx->kernelcache);
-    snprintf(kpwn, sizeof(kpwn), "%s.pwn", ctx->kernelcache);
-    snprintf(diff, sizeof(diff), "%s/kc.bpatch", ctx->staging);
-
-    if (kernel64patcher_amfi(kdec, kpwn))
-        return -1;
-
-    if (kerneldiff(kdec, kpwn, diff))
-        return -1;
-
+    if (kernel64patcher_amfi(kdec, kpwn) != 0) return -1;
+    if (kerneldiff(kdec, kpwn, diff)     != 0) return -1;
     return 0;
 }
 
-static int patch_iboot(const char *path, const char *extra)
+/* Patch one iBoot image (iBEC or iBSS) with iBoot64Patcher (exec_tool). */
+static int patch_iboot(const char *path, const char *extra_flags)
 {
+    char iboot_bin[PATH_MAX];
+    tool_path(TOOL_IBOOT64PATCHER, iboot_bin);
+
     char in[PATH_MAX], out[PATH_MAX];
     snprintf(in,  sizeof(in),  "%s.dec", path);
     snprintf(out, sizeof(out), "%s.pwn", path);
 
-    if (extra)
-        return run_cmd("./%s %s %s %s", TOOL_IBOOT64PATCHER, in, out, extra) ? 0 : -1;
+    if (extra_flags)
+        return exec_tool(iboot_bin, in, out, extra_flags, NULL);
     else
-        return run_cmd("./%s %s %s", TOOL_IBOOT64PATCHER, in, out) ? 0 : -1;
+        return exec_tool(iboot_bin, in, out, NULL);
 }
 
 static int stage_patch_iboot(rdsk_ctx_t *ctx)
 {
-    if (patch_iboot(ctx->ibec, "-n -b \"rd=md0 -v\""))
-        return -1;
-
-    return patch_iboot(ctx->ibss, NULL);
+    if (patch_iboot(ctx->ibec, "-n -b \"rd=md0 -v\"") != 0) return -1;
+    if (patch_iboot(ctx->ibss, NULL)                  != 0) return -1;
+    return 0;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stage: build ramdisk
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Patch the restored_external binary inside the mounted ramdisk.
+ *
+ * ldid2 -e captures entitlements to a plist, then ldid2 -M re-signs the
+ * patched binary with those entitlements.  The plist capture is done via
+ * shell_cmd_capture so we can write the output to a file ourselves without
+ * relying on shell redirection.
+ */
 static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
 {
+    char ldid2_bin[PATH_MAX];
+    tool_path(TOOL_LDID2, ldid2_bin);
+
     char hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
-    snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",       ctx->staging);
-    snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",      ctx->staging);
+    snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",          ctx->staging);
+    snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",         ctx->staging);
     snprintf(dst_bin, sizeof(dst_bin), "%s/usr/local/bin/restored_external", ctx->mount);
 
-    /* Native C: copy the local restored_external binary as the working copy. */
     if (file_copy("restored_external", hax) != 0) {
         log_error("patch_restored_external: failed to copy binary\n");
         return -1;
     }
 
-    /* ldid2 operations stay as shell calls — external binary. */
-    if (!run_cmd("./%s -e %s > %s", TOOL_LDID2, dst_bin, plist)) {
+    /* Capture entitlements from the ramdisk binary. */
+    char *ents = shell_cmd_capture("%s -e %s", ldid2_bin, dst_bin);
+    if (!ents) {
         log_error("patch_restored_external: ldid2 -e failed\n");
         unlink(hax);
         return -1;
     }
-    if (!run_cmd("./%s -M -S%s %s", TOOL_LDID2, plist, hax)) {
+
+    /* Write entitlements to plist file. */
+    FILE *pf = fopen(plist, "w");
+    if (!pf || fputs(ents, pf) == EOF) {
+        log_error("patch_restored_external: failed to write plist\n");
+        if (pf) fclose(pf);
+        free(ents);
+        unlink(hax);
+        return -1;
+    }
+    fclose(pf);
+    free(ents);
+
+    /* Re-sign patched binary. */
+    if (exec_tool(ldid2_bin, "-M", dup_printf("-S%s", plist), hax, NULL) != 0) {
         log_error("patch_restored_external: ldid2 -M failed\n");
         unlink(hax); unlink(plist);
         return -1;
     }
+    unlink(plist);
 
-    /* Native C: move patched binary to destination, clean up plist. */
     if (rename(hax, dst_bin) != 0) {
         log_error("patch_restored_external: rename failed: %s\n", strerror(errno));
-        unlink(hax); unlink(plist);
+        unlink(hax);
         return -1;
     }
-    unlink(plist);
     return 0;
 }
 
-/* FIX #10: detach the DMG on every early-return failure path after attach,
-   to prevent leaving the mountpoint in a stale mounted state. */
 static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 {
     log_info("Building ramdisk...");
 
-    /* merge split ssh archive if needed */
+    /* Reassemble split archive if necessary. */
     if (access("ssh64.tar.gz", F_OK) != 0)
-        if (!run_cmd("cat ssh64.tar.gz* > ssh64.tar.gz"))
+        if (shell_cmd("cat ssh64.tar.gz.* > ssh64.tar.gz") != 0)
             return -1;
 
-    /* Native C: copy decrypted ramdisk image to working copy. */
     char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
     snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec", ctx->ramdisk);
     snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
+
     if (file_copy(rdsk_dec, rdsk_dmg) != 0) {
         log_error("stage_build_ramdisk: failed to copy ramdisk image\n");
         return -1;
     }
 
-    /* Resize the DMG to hold the SSH payload (requires hdiutil). */
-    if (!run_cmd("hdiutil resize -size 180MB %s", rdsk_dmg))
-        return -1;
-    
-    sleep(3);
-    
-    /* mount */
-    if (!run_cmd("hdiutil attach %s -mountpoint %s", rdsk_dmg, ctx->mount))
+    if (shell_cmd("hdiutil resize -size 180MB '%s'", rdsk_dmg) != 0)
         return -1;
 
-    sleep(3);
-    
-    /* All steps below this point must go through 'fail' to ensure detach. */
-#define RDSK_FAIL(msg) do { log_error(msg "\n"); goto fail; } while (0)
+    sleep(SLEEP_HDIUTIL_ATTACH);
 
-    /* Native C: create required directories and write motd. */
+    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s'",
+                  rdsk_dmg, ctx->mount) != 0)
+        return -1;
+
+    sleep(SLEEP_HDIUTIL_ATTACH);
+
+    /* All failure paths below must detach before returning. */
+    int ret = 0;
+
+#define RDSK_FAIL(msg, ...) \
+    do { log_error(msg "\n", ##__VA_ARGS__); ret = -1; goto detach; } while (0)
+
+    /* Create required directories and write motd. */
     {
         char motd_path[PATH_MAX];
         snprintf(motd_path, sizeof(motd_path), "%s/etc/motd", ctx->mount);
@@ -906,136 +1150,195 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         if (mkdir_p(sshd, 0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir sshd failed");
     }
 
-    /* extract SSH payload */
-    if (!run_cmd("tar -C %s/sshd --preserve-permissions -xf ssh64.tar.gz",
-                 ctx->mount))
+    if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf ssh64.tar.gz",
+                  ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: tar extract failed");
 
-    /* install SSH payload into root */
-    if (!run_cmd(
-        "cd %s/sshd && "
-        "chmod 0755 bin/* usr/bin/* usr/sbin/* usr/local/bin/* && "
-        "rsync --ignore-existing -auK . %s/",
-        ctx->mount, ctx->mount))
+    if (shell_cmd(
+            "cd '%s/sshd' && "
+            "chmod 0755 bin/* usr/bin/* usr/sbin/* usr/local/bin/* && "
+            "rsync --ignore-existing -auK . '%s/'",
+            ctx->mount, ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: rsync failed");
 
-    /* cleanup unneeded files */
-    if (!run_cmd(
-        "cd %s && "
-        "rm -rf ./sshd "
-                "./usr/local/standalone/firmware/* "
-                "./usr/share/progressui "
-                "./usr/share/terminfo "
-                "./etc/apt "
-                "./etc/dpkg",
-        ctx->mount))
+    if (shell_cmd(
+            "cd '%s' && "
+            "rm -rf ./sshd "
+                    "./usr/local/standalone/firmware/* "
+                    "./usr/share/progressui "
+                    "./usr/share/terminfo "
+                    "./etc/apt "
+                    "./etc/dpkg",
+            ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: cleanup failed");
 
-    if (patch_restored_external_in_ramdisk(ctx))
+    if (patch_restored_external_in_ramdisk(ctx) != 0)
         RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
 
-    /* detach dmg */
-    if (!run_cmd("hdiutil detach -force %s", ctx->mount))
-        RDSK_FAIL("stage_build_ramdisk: hdiutil detach failed");
+detach:
+    shell_cmd("hdiutil detach -force '%s'", ctx->mount);
+    sleep(SLEEP_HDIUTIL_DETACH);
 
-    sleep(3);
+    if (ret != 0) return ret;
 
-    /* shrink to minimal */
-    if (!run_cmd("hdiutil resize -sectors min %s/rdsk.dmg", ctx->staging)) {
-        log_error("stage_build_ramdisk: hdiutil resize failed\n");
+    if (shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging) != 0)
         return -1;
-    }
 
-    sleep(1);
+    sleep(SLEEP_AFTER_RESIZE);
 
 #undef RDSK_FAIL
     return 0;
-
-fail:
-    run_cmd("hdiutil detach -force %s", ctx->mount);
-    return -1;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stage: build img4 payloads
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 static int stage_build_img4(rdsk_ctx_t *ctx)
 {
     char shsh[PATH_MAX];
-    build_shsh_path(ctx, shsh);
-    if (im4m_from_shsh(shsh, ctx->im4m) != 0)
-        return -1;
+    snprintf(shsh, sizeof(shsh), "%s/latest.shsh2", ctx->staging);
 
-    return run_cmd(
-        "cd %s && "
-        "./img4 -i %s -o kernelcache.img4 -P kc.bpatch -M IM4M -T rkrn && "
-        "./img4 -i %s -o trustcache.img4 -M IM4M -T rtsc && "
-        "./img4 -i rdsk.dmg -o rdsk.img4 -M IM4M -A -T rdsk && "
-        "./img4 -i %s -o dtree.img4 -M IM4M -T rdtr && "
-        "./img4 -i bootim@750x1334.im4p -o bootlogo.img4 -A -M IM4M -T rlgo && "
-        "./img4 -i %s.pwn -o ibec.img4 -A -M IM4M -T ibec && "
-        "./img4 -i %s.pwn -o ibss.img4 -A -M IM4M -T ibss",
-        ctx->staging,
-        ctx->kernelcache,
-        ctx->trustcache,
-        ctx->devicetree,
-        ctx->ibec,
-        ctx->ibss
-    ) ? 0 : -1;
+    if (im4m_from_shsh(shsh, ctx->im4m) != 0) return -1;
+
+    char img4_bin[PATH_MAX];
+    tool_path(TOOL_IMG4, img4_bin);
+
+    /*
+     * Each img4 invocation is independent; run them sequentially via
+     * exec_tool so that arguments are never subject to shell splitting.
+     *
+     * Paths that include the staging directory prefix are safe as long as
+     * STAGING_DIR itself contains no special characters — a reasonable
+     * assumption for a fixed /tmp path.
+     */
+    struct {
+        const char *in;
+        const char *out;
+        const char *patch;   /* -P argument, or NULL */
+        const char *type;    /* -T argument */
+        bool        apple;   /* pass -A flag */
+    } steps[] = {
+        { ctx->kernelcache,  ctx->kernelcache_img4,  "kc.bpatch", "rkrn", false },
+        { ctx->trustcache,   ctx->trustcache_img4,   NULL,         "rtsc", false },
+        /* rdsk.dmg lives in staging, referenced by path */
+        { NULL /* rdsk */,   ctx->ramdisk_img4,      NULL,         "rdsk", true  },
+        { ctx->devicetree,   ctx->devicetree_img4,   NULL,         "rdtr", false },
+        { "bootim@750x1334.im4p", ctx->bootim_img4,  NULL,         "rlgo", true  },
+        { NULL /* ibec */,   ctx->ibec_img4,         NULL,         "ibec", true  },
+        { NULL /* ibss */,   ctx->ibss_img4,         NULL,         "ibss", true  },
+    };
+
+    /* Fill in the NULL in-paths that need construction. */
+    char rdsk_dmg[PATH_MAX], ibec_pwn[PATH_MAX], ibss_pwn[PATH_MAX];
+    snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg",  ctx->staging);
+    snprintf(ibec_pwn, sizeof(ibec_pwn), "%s.pwn",        ctx->ibec);
+    snprintf(ibss_pwn, sizeof(ibss_pwn), "%s.pwn",        ctx->ibss);
+    steps[2].in = rdsk_dmg;
+    steps[5].in = ibec_pwn;
+    steps[6].in = ibss_pwn;
+
+    /* Patch file path (only kernelcache uses one). */
+    char kc_patch[PATH_MAX];
+    snprintf(kc_patch, sizeof(kc_patch), "%s/kc.bpatch", ctx->staging);
+    steps[0].patch = kc_patch;
+
+    for (size_t i = 0; i < sizeof(steps)/sizeof(steps[0]); i++) {
+        int r;
+        if (steps[i].patch) {
+            r = steps[i].apple
+                ? exec_tool(img4_bin, "-i", steps[i].in, "-o", steps[i].out,
+                            "-P", steps[i].patch,
+                            "-M", ctx->im4m, "-A",
+                            "-T", steps[i].type, NULL)
+                : exec_tool(img4_bin, "-i", steps[i].in, "-o", steps[i].out,
+                            "-P", steps[i].patch,
+                            "-M", ctx->im4m,
+                            "-T", steps[i].type, NULL);
+        } else {
+            r = steps[i].apple
+                ? exec_tool(img4_bin, "-i", steps[i].in, "-o", steps[i].out,
+                            "-M", ctx->im4m, "-A",
+                            "-T", steps[i].type, NULL)
+                : exec_tool(img4_bin, "-i", steps[i].in, "-o", steps[i].out,
+                            "-M", ctx->im4m,
+                            "-T", steps[i].type, NULL);
+        }
+        if (r != 0) {
+            log_error("stage_build_img4: img4 failed on step %zu (out=%s)\n",
+                      i, steps[i].out);
+            return -1;
+        }
+    }
+    return 0;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stage: patch (top-level)
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 static int stage_patch(rdsk_ctx_t *ctx)
 {
     log_info("Patching images...");
 
-    if (stage_ensure_tools())    return -1;
-    if (stage_get_shsh(ctx))     return -1;
-    if (stage_patch_kernel(ctx)) return -1;
-    if (stage_patch_iboot(ctx))  return -1;
-    if (stage_build_ramdisk(ctx))return -1;
-    if (stage_build_img4(ctx))   return -1;
-
+    if (stage_ensure_tools()    != 0) return -1;
+    if (stage_get_shsh(ctx)     != 0) return -1;
+    if (stage_patch_kernel(ctx) != 0) return -1;
+    if (stage_patch_iboot(ctx)  != 0) return -1;
+    if (stage_build_ramdisk(ctx)!= 0) return -1;
+    if (stage_build_img4(ctx)   != 0) return -1;
     return 0;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Stage: boot
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
     log_info("Waiting for DFU device...");
-    if (dfu_wait_for_device() != 0)
-        return -1;
+    if (dfu_wait_for_device() != 0) return -1;
 
     log_info("Booting SSH ramdisk...");
+    if (gastera1n_reset() != 0) return -1;
+    sleep(SLEEP_AFTER_RESET);
 
-    if (gastera1n_reset() != 0)
-        return -1;
+    if (dfu_send_file(ctx->ibss_img4)    != 0) return -1;
+    sleep(SLEEP_IBSS_AFTER_SEND);
 
-    sleep(2);
+    if (dfu_send_file(ctx->ibec_img4)    != 0) return -1;
+    sleep(SLEEP_IBEC_AFTER_SEND);
 
-    if (dfu_send_file(ctx->ibss_img4)) return -1;
-    sleep(1);
+    if (dfu_send_cmd("go")               != 0) return -1;
+    sleep(SLEEP_AFTER_GO);
 
-    if (dfu_send_file(ctx->ibec_img4)) return -1;
-    sleep(1);
+    if (dfu_send_file(ctx->bootim_img4)  != 0) return -1;
+    if (dfu_send_cmd("setpicture 0x1")   != 0) return -1;
+    if (dfu_send_cmd("bgcolor 255 55 55")!= 0) return -1;
 
-    if (dfu_send_cmd("go")) return -1;
-    sleep(5);
+    if (dfu_send_file(ctx->devicetree_img4) != 0) return -1;
+    if (dfu_send_cmd("devicetree")          != 0) return -1;
 
-    if (dfu_send_file(ctx->bootim_img4))    return -1;
-    if (dfu_send_cmd("setpicture 0x1"))     return -1;
-    if (dfu_send_cmd("bgcolor 255 55 55"))  return -1;
+    if (dfu_send_file(ctx->ramdisk_img4) != 0) return -1;
+    if (dfu_send_cmd("ramdisk")          != 0) return -1;
 
-    if (dfu_send_file(ctx->devicetree_img4)) return -1;
-    if (dfu_send_cmd("devicetree"))          return -1;
+    if (dfu_send_file(ctx->trustcache_img4) != 0) return -1;
+    if (dfu_send_cmd("firmware")            != 0) return -1;
 
-    if (dfu_send_file(ctx->ramdisk_img4)) return -1;
-    if (dfu_send_cmd("ramdisk"))          return -1;
-
-    if (dfu_send_file(ctx->trustcache_img4)) return -1;
-    if (dfu_send_cmd("firmware"))            return -1;
-
-    if (dfu_send_file(ctx->kernelcache_img4)) return -1;
-    if (dfu_send_cmd("bootx"))                return -1;
+    if (dfu_send_file(ctx->kernelcache_img4) != 0) return -1;
+    if (dfu_send_cmd("bootx")               != 0) return -1;
 
     log_info("Device should be booting now.");
     return 0;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Public entry point
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
 int ideviceenterramdisk_load(void)
 {
@@ -1045,10 +1348,10 @@ int ideviceenterramdisk_load(void)
     if (ramdiskBootMode == 1)
         return stage_boot_ramdisk(&ctx);
 
-    if (stage_prepare(&ctx))         return -1;
-    if (stage_download_images(&ctx)) return -1;
-    if (stage_decrypt(&ctx))         return -1;
-    if (stage_patch(&ctx))           return -1;
+    if (stage_prepare(&ctx)         != 0) return -1;
+    if (stage_download_images(&ctx) != 0) return -1;
+    if (stage_decrypt(&ctx)         != 0) return -1;
+    if (stage_patch(&ctx)           != 0) return -1;
 
     return stage_boot_ramdisk(&ctx);
 }
