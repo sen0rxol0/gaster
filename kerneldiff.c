@@ -82,15 +82,6 @@ int kerneldiff(const char *kc_original, const char *kc_patched, const char *kc_d
         return -1;
     }
 
-    if (orig_size != patch_size) {
-        fprintf(stderr,
-                "kerneldiff: size mismatch: '%s' (%zu bytes) vs '%s' (%zu bytes)\n",
-                kc_original, orig_size, kc_patched, patch_size);
-        free(o);
-        free(p);
-        return -1;
-    }
-
     /* Heap-allocate the diff table to avoid ~1 MB of stack usage. */
     diff_entry_t *diff = calloc(MAX_DIFF, sizeof(diff_entry_t));
     if (!diff) {
