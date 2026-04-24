@@ -1,82 +1,156 @@
-// kerneldiff original source: https://raw.githubusercontent.com/verygenericname/kerneldiff_C/refs/heads/main/kerneldiff.c
+/*
+ * kerneldiff.c
+ *
+ * Produce a bpatch-format diff between two kernel cache files.
+ * Source: https://github.com/verygenericname/kerneldiff_C
+ *
+ * Fixes applied vs. original:
+ *   • stat() call passed &st correctly (was passing &&st via pointer arg)
+ *   • fread() return value now checked
+ *   • Size mismatch between original and patched is now an error
+ *   • diff table moved from stack (~1 MB) to heap
+ *   • fopen/fwrite return values checked for the output file
+ *   • All string arguments are const-correct per the header declaration
+ */
+
+#include "kerneldiff.h"
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/stat.h>
 #include <string.h>
+#include <sys/stat.h>
 
-#define MAX_DIFF 16384
-#define DIFF_COMP_MAX_SIZE 20
+#define MAX_DIFF          16384
+#define DIFF_COMP_MAX_SZ  20
 
+/* Header written at the top of every bpatch file. */
 static const char kerneldiff_amfi[] = "#AMFI\n\n";
 
-static char*
-kerneldiff_readfile(char *pathname, struct stat *st) {
-  if (stat(pathname, &st) != 0) {
-      perror("kerneldiff: Failed to get file status");
-      return NULL;
-  }
+/* One bpatch record: offset, original byte, patched byte – all as hex strings. */
+typedef struct {
+    char offset[DIFF_COMP_MAX_SZ];
+    char orig  [DIFF_COMP_MAX_SZ];
+    char patch [DIFF_COMP_MAX_SZ];
+} diff_entry_t;
 
-  FILE *fp = fopen(pathname, "rb");
-  if (!fp) {
-      perror("kerneldiff: Failed to open file");
-      return NULL;
-  }
+/* Read an entire file into a heap buffer.  Fills *out_size with the file
+   size.  Returns the buffer on success; caller must free().
+   Returns NULL on any error. */
+static char *read_file(const char *path, size_t *out_size)
+{
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        perror("kerneldiff: stat");
+        return NULL;
+    }
 
-  char *data = malloc(st.st_size);
-  if (!data) {
-      perror("kerneldiff: Failed to allocate memory");
-      fclose(fp);
-      return NULL;
-  }
+    FILE *fp = fopen(path, "rb");
+    if (!fp) {
+        perror("kerneldiff: fopen");
+        return NULL;
+    }
 
-  fread(data, 1, st.st_size, fp);
-  fclose(fp);
-  return data;
+    size_t size = (size_t)st.st_size;
+    char *data = malloc(size);
+    if (!data) {
+        perror("kerneldiff: malloc");
+        fclose(fp);
+        return NULL;
+    }
+
+    if (fread(data, 1, size, fp) != size) {
+        fprintf(stderr, "kerneldiff: short read on '%s'\n", path);
+        free(data);
+        fclose(fp);
+        return NULL;
+    }
+
+    fclose(fp);
+    *out_size = size;
+    return data;
 }
 
-int
-kerneldiff(char *kc_original, char *kc_patched, char *kc_diff) {
+int kerneldiff(const char *kc_original, const char *kc_patched, const char *kc_diff)
+{
+    size_t orig_size = 0, patch_size = 0;
+    char *o = read_file(kc_original, &orig_size);
+    char *p = read_file(kc_patched,  &patch_size);
 
-  char diff[MAX_DIFF][3][DIFF_COMP_MAX_SIZE];
-  int diff_idx = 0;
+    if (!o || !p) {
+        free(o);
+        free(p);
+        return -1;
+    }
 
-  struct stat st1, st2;
-  char *o = kerneldiff_readfile(kc_original, &st1);
-  char *p = kerneldiff_readfile(kc_patched, &st2);
+    if (orig_size != patch_size) {
+        fprintf(stderr,
+                "kerneldiff: size mismatch: '%s' (%zu bytes) vs '%s' (%zu bytes)\n",
+                kc_original, orig_size, kc_patched, patch_size);
+        free(o);
+        free(p);
+        return -1;
+    }
 
-  if (!o || !p) {
-      free(o);
-      free(p);
-      return -1;
-  }
+    /* Heap-allocate the diff table to avoid ~1 MB of stack usage. */
+    diff_entry_t *diff = calloc(MAX_DIFF, sizeof(diff_entry_t));
+    if (!diff) {
+        perror("kerneldiff: calloc");
+        free(o);
+        free(p);
+        return -1;
+    }
 
-  for (int i = 0; i < st1.st_size; i++) {
-    if (o[i] != p[i]) {
+    int diff_idx = 0;
+    for (size_t i = 0; i < orig_size; i++) {
+        if (o[i] == p[i]) continue;
+
         if (diff_idx >= MAX_DIFF) {
-            fprintf(stderr, "kerneldiff: too many differences, only a maximum of %d differences are supported\n", MAX_DIFF);
+            fprintf(stderr,
+                    "kerneldiff: too many differences (max %d supported)\n",
+                    MAX_DIFF);
+            free(diff);
             free(o);
             free(p);
             return -1;
         }
-        snprintf(diff[diff_idx][0], DIFF_COMP_MAX_SIZE, "0x%x", i);
-        snprintf(diff[diff_idx][1], DIFF_COMP_MAX_SIZE, "0x%x", (unsigned char)o[i]);
-        snprintf(diff[diff_idx][2], DIFF_COMP_MAX_SIZE, "0x%x", (unsigned char)p[i]);
+
+        snprintf(diff[diff_idx].offset, DIFF_COMP_MAX_SZ, "0x%zx", i);
+        snprintf(diff[diff_idx].orig,   DIFF_COMP_MAX_SZ, "0x%x",  (unsigned char)o[i]);
+        snprintf(diff[diff_idx].patch,  DIFF_COMP_MAX_SZ, "0x%x",  (unsigned char)p[i]);
         diff_idx++;
     }
-  }
 
-  free(p);
-  free(o);
+    free(o);
+    free(p);
 
-  FILE *fp = fopen(kc_diff, "w+");
-  fwrite(kerneldiff_amfi, 1, sizeof(kerneldiff_amfi) - 1, fp);
+    FILE *fp = fopen(kc_diff, "w+");
+    if (!fp) {
+        perror("kerneldiff: fopen output");
+        free(diff);
+        return -1;
+    }
 
-  for (int i = 0; i < diff_idx; i++) {
-    printf("kerneldiff: %s %s %s\n", diff[i][0], diff[i][1], diff[i][2]);
-    fprintf(fp, "%s %s %s\n", diff[i][0], diff[i][1], diff[i][2]);
-  }
+    if (fwrite(kerneldiff_amfi, 1, sizeof(kerneldiff_amfi) - 1, fp)
+            != sizeof(kerneldiff_amfi) - 1) {
+        fprintf(stderr, "kerneldiff: failed to write header to '%s'\n", kc_diff);
+        fclose(fp);
+        free(diff);
+        return -1;
+    }
 
-  fclose(fp);
+    for (int i = 0; i < diff_idx; i++) {
+        printf("kerneldiff: %s %s %s\n",
+               diff[i].offset, diff[i].orig, diff[i].patch);
+        if (fprintf(fp, "%s %s %s\n",
+                    diff[i].offset, diff[i].orig, diff[i].patch) < 0) {
+            fprintf(stderr, "kerneldiff: write error on '%s'\n", kc_diff);
+            fclose(fp);
+            free(diff);
+            return -1;
+        }
+    }
 
-  return 0;
+    fclose(fp);
+    free(diff);
+    return 0;
 }

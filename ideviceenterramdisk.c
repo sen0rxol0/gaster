@@ -43,7 +43,7 @@
 #include "ideviceloaders.h"
 #include "gastera1n.h"
 #include "kernel64patcher.h"
-#include "kerneldiff.h"          /* kerneldiff() declaration – no longer #include'd as .c */
+#include "kerneldiff.h"
 
 #include <plist/plist.h>
 #include <libfragmentzip/libfragmentzip.h>
@@ -542,7 +542,7 @@ static void render_progress(unsigned int progress)
 }
 
 /* fragmentzip download callback – signature matches fragmentzip_progress_t. */
-static void fragzip_progress_cb(unsigned int progress)
+static void default_prog_cb(unsigned int progress)
 {
     render_progress(progress);
 }
@@ -877,7 +877,7 @@ static int download_component(rdsk_ctx_t *ctx,
     if (!ipsw) return -1;
 
     log_info("Downloading %s", remote);
-    int r = fragmentzip_download_file(ipsw, remote, local, fragzip_progress_cb);
+    int r = fragmentzip_download_file(ipsw, remote, local, default_prog_cb);
     fragmentzip_close(ipsw);
     return r;
 }
