@@ -91,7 +91,7 @@ XCODE_APP="${XCODE_APP:-/Applications/Xcode.app}"
 GASTER_VERSION="v1.0"
 
 # libplist / libirecovery versions the host application ships
-LIBPLIST_VERSION="2.0.2"
+LIBPLIST_VERSION="2.2.0"
 LIBIRECOVERY_VERSION="1.0.0"
 
 # ---------------------------------------------------------------------------
