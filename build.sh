@@ -112,8 +112,10 @@ clone_sources() {
     git clone --quiet https://github.com/tihmstar/libfragmentzip.git
     git -C libfragmentzip checkout --quiet "92f184e631c7156113850afdb9c68a2d892e35b6"
 
-    # libplist – pinned to the 2.2.0 commit; built only for headers + .pc.
-    # The actual shared library at runtime comes from the host application.
+    # libplist – pinned to the 2.2.0 commit.
+    # The static archive stays in the sysroot for link-time symbol resolution.
+    # At runtime the host application's Frameworks/ shared copy is used via
+    # the @rpath LC_RPATH entries embedded by fix_macos_rpath().
     git clone --quiet https://github.com/libimobiledevice/libplist.git
     git -C libplist checkout --quiet "c5a30e9267068436a75b5d00fcbf95cb9c1f4dcd"
 
@@ -166,7 +168,6 @@ setup_macos_env() {
 -Wl,-rpath,@executable_path/../Frameworks \
 -Wl,-rpath,@loader_path/../Frameworks"
 
-    # Build-host flags (for any host-native tools produced during the build)
     local host_arch
     host_arch="$(uname -m)"
     export CFLAGS_FOR_BUILD="-arch ${host_arch} -isysroot ${sdk} -Os"
@@ -236,10 +237,8 @@ build_zlib() {
     "${MAKE_BIN}" -j"${NCPU}" install DESTDIR="${_SYSROOT}"
 }
 
-# Generic autotools helper: run autogen.sh (with autoreconf -fi fallback),
-# configure, make, make install DESTDIR=...
 build_autotools() {
-    local dir="$1"; shift          # remaining args forwarded to configure
+    local dir="$1"; shift
     cd "${dir}"
 
     if [[ -x ./autogen.sh ]]; then
@@ -260,9 +259,6 @@ build_static_libs() {
     local platform="$1"
     local common_args=(--prefix="${PREFIX}" --host="${HOST_TRIPLE}")
 
-    # Build order matters: libgeneral <- libplist <- libfragmentzip (needs both)
-    #                                 <- libirecovery (needs libplist)
-
     build_zlib
 
     log "Building libgeneral (static)"
@@ -272,65 +268,44 @@ build_static_libs() {
 
     # -----------------------------------------------------------------------
     # libplist:
-    #   Required by libfragmentzip and libirecovery.  Built only to produce
-    #   headers + .pc files for compile/link resolution; the actual shared
-    #   library at runtime is the one embedded in the host application.
-    #   The static archive is removed after install to prevent accidental
-    #   static linking against it, which would fail on platforms where the
-    #   host already provides the shared library.
+    #   Built as a static archive so the linker can resolve symbols from
+    #   libirecovery and libfragmentzip (which depend on it).  The archive
+    #   stays in the sysroot; gastera1n's Makefile links -lplist-2.0 against
+    #   it at build time.  At runtime dyld loads the host Frameworks/ dylib
+    #   via the @rpath LC embedded by fix_macos_rpath().
+    #   DO NOT remove the .a — that breaks the link step.
     # -----------------------------------------------------------------------
-    log "Building libplist ${LIBPLIST_VERSION} (headers/pkgconfig only)"
+    log "Building libplist ${LIBPLIST_VERSION} (static)"
     build_autotools "${_SRC_ROOT}/libplist" \
         "${common_args[@]}" \
         --disable-shared --enable-static --without-cython
 
-    # Remove static archives so nothing accidentally links them statically.
-    # The host application provides the real shared libraries at runtime.
-    rm -f "${_SYSROOT}${PREFIX}/lib/libplist"*.a \
-          "${_SYSROOT}${PREFIX}/lib/libplist"*.la
-
-    # libfragmentzip depends on libgeneral and libplist – both must be built first.
     log "Building libfragmentzip (static)"
     build_autotools "${_SRC_ROOT}/libfragmentzip" \
         "${common_args[@]}" \
         --disable-shared --enable-static
 
     # -----------------------------------------------------------------------
-    # libirecovery:
-    #   Depends on libplist headers.  Same headers/pkgconfig-only treatment.
+    # libirecovery:  same static / link-time-only treatment as libplist.
     # -----------------------------------------------------------------------
-    log "Building libirecovery ${LIBIRECOVERY_VERSION} (headers/pkgconfig only)"
+    log "Building libirecovery ${LIBIRECOVERY_VERSION} (static)"
     build_autotools "${_SRC_ROOT}/libirecovery" \
         "${common_args[@]}" \
         --disable-shared --enable-static
 
-    # Remove static archives for the same reason as libplist above.
-    rm -f "${_SYSROOT}${PREFIX}/lib/libirecovery"*.a \
-          "${_SYSROOT}${PREFIX}/lib/libirecovery"*.la
-
-    # Inject pkg-config stubs so gastera1n's Makefile resolves the correct
-    # -l flags for the host-embedded shared libraries.
+    # Overwrite auto-generated .pc files with stubs that reflect the correct
+    # Libs: line (sysroot -L so the linker finds the .a files).
     _inject_host_pc_stubs "${platform}"
 }
 
-# Write minimal .pc stubs for libplist and libirecovery.
-# On macOS the @rpath entries in LDFLAGS already point to the host Frameworks/
-# bundle; on Linux the host is expected to set LD_LIBRARY_PATH / RUNPATH.
 _inject_host_pc_stubs() {
     local platform="$1"
     local pc_dir="${_SYSROOT}${PREFIX}/lib/pkgconfig"
     mkdir -p "${pc_dir}"
 
-    # The static archives for libplist and libirecovery were removed after
-    # install, so the sysroot libdir contains NO actual library files for
-    # these two deps.
-    #
-    # On macOS: omit -L entirely; the @rpath entries already in LDFLAGS
-    # point the dynamic linker at the host Frameworks/ bundle.
-    #
-    # On Linux: probe the real system multiarch libdir and emit a concrete
-    # -L only when the shared library is actually present there.
-
+    # On macOS the static archives in the sysroot are sufficient for the
+    # linker; @rpath handles runtime.  On Linux we additionally probe for
+    # any system shared library and emit a -L for it.
     local extra_libs_plist=""
     local extra_libs_irecovery=""
 
@@ -358,7 +333,6 @@ _inject_host_pc_stubs() {
             fi
         done
 
-        # Non-fatal warnings so CI logs surface missing host packages early.
         if ! ldconfig -p 2>/dev/null | grep -q "libplist-2.0"; then
             warn "libplist-2.0 not found in ldconfig cache -- install the host package before linking gastera1n"
         fi
@@ -366,7 +340,6 @@ _inject_host_pc_stubs() {
             warn "libirecovery-1.0 not found in ldconfig cache -- install the host package before linking gastera1n"
         fi
     fi
-    # On macOS: no -L emitted; @rpath in LDFLAGS resolves the host Frameworks/.
 
     cat > "${pc_dir}/libplist-2.0.pc" <<EOF
 prefix=${PREFIX}
@@ -377,7 +350,7 @@ includedir=\${prefix}/include
 Name: libplist
 Description: Library for working with Apple Binary and XML Property Lists (host-embedded)
 Version: ${LIBPLIST_VERSION}
-Libs: ${extra_libs_plist} -lplist-2.0
+Libs: -L\${libdir} ${extra_libs_plist} -lplist-2.0
 Libs.private:
 Cflags: -I\${includedir}
 EOF
@@ -391,7 +364,7 @@ includedir=\${prefix}/include
 Name: libirecovery
 Description: Library for talking to Apple devices in DFU/Recovery mode (host-embedded)
 Version: ${LIBIRECOVERY_VERSION}
-Libs: ${extra_libs_irecovery} -lirecovery-1.0
+Libs: -L\${libdir} ${extra_libs_irecovery} -lirecovery-1.0
 Libs.private:
 Cflags: -I\${includedir}
 EOF
@@ -417,8 +390,6 @@ build_gastera1n() {
     log "Building gastera1n"
     cd "${ROOT_DIR}"
 
-    # Expose the per-arch sysroot as a libs_root/ convenience tree that the
-    # gastera1n Makefile reads from.
     rm -rf "${ROOT_DIR}/libs_root"
     mkdir -p "${ROOT_DIR}/libs_root"
     cp -a "${_SYSROOT}${PREFIX}/include" "${ROOT_DIR}/libs_root/"
@@ -431,9 +402,11 @@ build_gastera1n() {
 
 # ---------------------------------------------------------------------------
 # macOS rpath / strip fixup
-#   gastera1n links against libplist and libirecovery from the host bundle.
-#   If the build accidentally picked up absolute Homebrew paths, rewrite them
-#   to @rpath so the host's Frameworks/ copy is used at runtime.
+#
+# The gastera1n binary may have been linked against libplist/libirecovery
+# static archives whose install_name encodes an absolute sysroot path.
+# Rewrite any such paths to @rpath/<dylib> so dyld resolves them from the
+# host application's Frameworks/ bundle at runtime.
 # ---------------------------------------------------------------------------
 fix_macos_rpath() {
     local bin="$1"
@@ -450,7 +423,6 @@ fix_macos_rpath() {
         esac
     done < <(otool -L "${bin}" 2>/dev/null | awk 'NR>1{print $1}')
 
-    # -u -r: strip unreferenced symbols, keep external relocs (safe for dyld)
     "${STRIP:-strip}" -u -r "${bin}" 2>/dev/null \
         || "${STRIP:-strip}" "${bin}" \
         || true
@@ -462,29 +434,20 @@ fix_linux_strip() {
 }
 
 # ---------------------------------------------------------------------------
-# Companion tool archive helpers
+# Companion tool helpers
 #
-# img4 is built from source (img4lib) and placed directly into the release
-# tree from the sysroot; it is NOT expected as a pre-built archive here.
+# All tools are installed FLAT alongside the gastera1n binary with no
+# arch/platform suffix in the filename.
 #
-# Expected archive naming in ROOT_DIR for the remaining tools:
+# Expected archive names in ROOT_DIR:
+#   <tool>_macOS_arm64.gz    <tool>_macOS_x86_64.gz
+#   <tool>_linux_x86_64.gz  <tool>_linux_arm64.gz
+# A platform-only fallback (e.g. tsschecker_macOS.gz) is also accepted.
 #
-#   <tool>_macOS_arm64.gz     <tool>_macOS_x86_64.gz
-#   <tool>_linux_x86_64.gz   <tool>_linux_arm64.gz
-#
-# where <tool> ∈ { ldid2, iBoot64Patcher, tsschecker }
-#
-# A platform-only fallback (e.g. tsschecker_macOS.gz) is accepted when no
-# arch-specific archive exists.
-#
-# Release layout: all tools are placed FLAT alongside the gastera1n binary,
-# named without any architecture or platform suffix.
+# Tools: ldid2, iBoot64Patcher, tsschecker
+# img4 is built from source and handled separately.
 # ---------------------------------------------------------------------------
 
-# Decompress a single tool archive into the destination directory, naming
-# the output binary after the tool with no arch/platform suffix.
-#
-#   _install_tool_archive <archive.gz> <tool_name> <dest_dir>
 _install_tool_archive() {
     local archive="$1"
     local tool_name="$2"
@@ -498,21 +461,14 @@ _install_tool_archive() {
     log "  installed tool: ${tool_name}"
 }
 
-# For each companion tool, find the best matching archive for the given
-# platform/arch and install it (decompressed, clean name) into dest_dir.
-#
-#   _install_companion_tools <platform> <arch> <dest_dir>
 _install_companion_tools() {
     local platform="$1"
     local arch="$2"
     local dest_dir="$3"
 
-    # img4 is built from source; excluded from this list deliberately.
     local tools=(ldid2 iBoot64Patcher tsschecker)
-
     local t
     for t in "${tools[@]}"; do
-        # Preference order: arch-specific → platform-only → skip
         if   [[ -f "${ROOT_DIR}/${t}_${platform}_${arch}.gz" ]]; then
             _install_tool_archive "${ROOT_DIR}/${t}_${platform}_${arch}.gz" "${t}" "${dest_dir}"
         elif [[ -f "${ROOT_DIR}/${t}_${platform}.gz" ]]; then
@@ -526,10 +482,9 @@ _install_companion_tools() {
 # ---------------------------------------------------------------------------
 # Release tree staging
 #
-# All tools (img4 + companions) are placed FLAT in the same directory as the
-# gastera1n binary — no tools/ subdirectory, no arch/platform suffixes.
+# Flat layout — everything lives alongside gastera1n, no tools/ subdir,
+# no arch/platform suffixes on tool names.
 #
-# Layout:
 #   <release>/
 #     gastera1n
 #     img4
@@ -553,8 +508,7 @@ stage_release_tree() {
 
     install -m 755 "${gastera1n_bin}" "${release_dir}/gastera1n"
 
-    # img4 is built from source; install the binary directly from the sysroot,
-    # flat alongside gastera1n with no arch/platform suffix.
+    # img4 – built from source, flat alongside gastera1n, no arch suffix
     local img4_bin="${_SYSROOT}${PREFIX}/bin/img4"
     if [[ -x "${img4_bin}" ]]; then
         install -m 755 "${img4_bin}" "${release_dir}/img4"
@@ -562,11 +516,10 @@ stage_release_tree() {
         warn "img4 binary not found in sysroot -- skipping"
     fi
 
-    # Pre-built tool archives (ldid2, iBoot64Patcher, tsschecker):
-    # decompressed and installed flat alongside gastera1n.
+    # Pre-built companion tools – decompressed, flat, no arch/platform suffix
     _install_companion_tools "${platform}" "${arch}" "${release_dir}"
 
-    # Static assets – warn but do not abort on missing optional files
+    # Static assets
     local asset
     for asset in LICENSE restored_external.gz "bootim@750x1334.im4p"; do
         if [[ -f "${ROOT_DIR}/${asset}" ]]; then
@@ -576,7 +529,6 @@ stage_release_tree() {
         fi
     done
 
-    # Glob assets (ssh64* README*) – nullglob prevents errors on no match
     shopt -s nullglob
     for asset in "${ROOT_DIR}"/ssh64* "${ROOT_DIR}"/README*; do
         cp -v "${asset}" "${release_dir}/"
@@ -597,8 +549,6 @@ build_single() {
 
     log "━━━ Build start: platform=${platform} arch=${arch} ━━━"
 
-    # _SYSROOT / _SRC_ROOT are used by all helper functions; exported so that
-    # any subshells spawned by build_autotools etc. inherit them.
     export _SYSROOT="${build_root}/sysroot"
     export _SRC_ROOT="${build_root}/src"
 
@@ -619,8 +569,6 @@ build_single() {
 
     build_static_libs "${platform}"
     build_img4
-
-    # gastera1n binary lands at ROOT_DIR/gastera1n per the project Makefile
     build_gastera1n
 
     local artifact_bin="${build_root}/artifacts/gastera1n"
@@ -641,10 +589,8 @@ build_single() {
 # ---------------------------------------------------------------------------
 # Universal macOS merge
 #
-# The universal release is produced by lipo-merging gastera1n and all Mach-O
-# tool binaries from the arm64 and x86_64 single-arch releases.  Since tools
-# are now flat (no nested tools/ dir), we simply walk the release tree,
-# lipo-merge every matching Mach-O pair, and copy non-Mach-O files verbatim.
+# Walk the arm64 release (flat dir); lipo-merge every Mach-O that also
+# appears in the x86_64 release.  Non-Mach-O files are copied verbatim.
 # ---------------------------------------------------------------------------
 merge_universal_release() {
     local arm_release="$1"
@@ -656,7 +602,6 @@ merge_universal_release() {
 
     copy_tree "${arm_release}" "${universal_release}"
 
-    # lipo-merge every Mach-O binary that appears in both trees
     while IFS= read -r -d '' file; do
         local rel="${file#${arm_release}/}"
         local other="${x86_release}/${rel}"
@@ -735,7 +680,6 @@ main() {
         linux)
             case "${TARGET_ARCH}" in
                 x86_64|arm64|aarch64)
-                    # Normalise aarch64 → arm64 in the release name
                     local norm_arch="${TARGET_ARCH}"
                     [[ "${norm_arch}" == "aarch64" ]] && norm_arch="arm64"
                     local release_dir="${DIST_ROOT}/gastera1n-linux-${norm_arch}_${GASTER_VERSION}"
@@ -756,7 +700,6 @@ main() {
     esac
 }
 
-# Guard against accidental sourcing
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
