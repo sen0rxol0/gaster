@@ -663,8 +663,7 @@ int dfu_send_file(const char *filepath)
     if (!client) return -1;
 
     irecv_event_subscribe(client, IRECV_PROGRESS, &dfu_progress_cb, NULL);
-    irecv_error_t err = irecv_send_file(client, filepath,
-                                        IRECV_SEND_OPT_DFU_NOTIFY_FINISH);
+    irecv_error_t err = irecv_send_file(client, filepath, 0);
     irecv_close(client);
     return (err == IRECV_E_SUCCESS) ? 0 : -1;
 }
