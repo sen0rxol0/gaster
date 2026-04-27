@@ -15,12 +15,8 @@
 #include "gastera1n.h"
 
 extern bool         DEBUG_ENABLED;
-extern unsigned int ramdiskBootMode;
-
-// FIX: pwnDFUMode must match the type used in other translation units.
-// Declared as `int` here previously but referenced as `unsigned int`
-// externally, causing undefined behaviour on sign-mismatch.
-unsigned int pwnDFUMode;
+//extern bool         ramdiskBootMode;
+//extern bool         pwnDFUMode;
 
 int main(int argc, char **argv)
 {
@@ -58,8 +54,8 @@ int main(int argc, char **argv)
     puts("");
 
     DEBUG_ENABLED  = false;
-    ramdiskBootMode = 0;
-    pwnDFUMode      = 0;
+    ramdiskBootMode = false;
+    pwnDFUMode      = false;
 
     int opt;
     while ((opt = getopt(argc, argv, "htdp")) != -1) {
@@ -72,7 +68,7 @@ int main(int argc, char **argv)
             return 0;
         case 't':
             log_warn("%s\n", "Booting directly, skipping downloading and patching!");
-            ramdiskBootMode = 1;
+            ramdiskBootMode = true;
             break;
         case 'd':
             log_warn("%s\n", "Debug is enabled!");
@@ -80,7 +76,7 @@ int main(int argc, char **argv)
             break;
         case 'p':
             log_warn("%s\n", "Entering pwned DFU mode with gaster!");
-            pwnDFUMode = 1;
+            pwnDFUMode = true;
             break;
         default:
             break;
@@ -92,7 +88,7 @@ int main(int argc, char **argv)
     // assignment was dead.  Initialise directly from the call.
     int ret = gastera1n();
 
-    if (pwnDFUMode == 0 && ret == 0) {
+    if (!pwnDFUMode && ret == 0) {
         log_info("Device reached pwned DFU mode.");
         ret = ideviceenterramdisk_load();
 
