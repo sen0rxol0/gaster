@@ -9,7 +9,6 @@
  * Use bool: these are purely on/off switches.
  */
 extern bool ramdiskBootMode; /* true  → skip prepare/download/patch, boot directly */
-extern bool pwnDFUMode;      /* true  → device is already in pwned DFU              */
 
 /*
  * ideviceenterramdisk_set_tool_dir – must be called before any other
