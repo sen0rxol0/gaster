@@ -28,7 +28,6 @@
 # Environment overrides (all optional):
 #   WORK_ROOT    – scratch directory          (default: .build/<platform>-<arch>)
 #   DIST_ROOT    – output directory           (default: dist/)
-#   XCODE_APP    – path to Xcode.app          (default: /Applications/Xcode.app)
 #   INSTALL_DEPS – set to 1 to auto-brew-install build tools on macOS
 # ---------------------------------------------------------------------------
 set -euo pipefail
