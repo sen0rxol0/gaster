@@ -713,7 +713,7 @@ static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
     fclose(f);
 
     plist_t shsh_plist = NULL;
-    plist_from_memory(data, (uint32_t)size, &shsh_plist, NULL);
+    plist_from_memory(data, (uint32_t)size, &shsh_plist);
     free(data);
 
     if (!shsh_plist) {
