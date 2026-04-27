@@ -24,6 +24,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
@@ -321,64 +322,74 @@ static char *dup_printf(const char *fmt, ...)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * exec_tool – fork/exec a tool with an argv list, without /bin/sh.
+ * exec_toolv – fork/exec a tool from a pre-built NULL-terminated argv array.
  *
  * argv[0] must be the absolute path of the executable.
- * The variadic list must be terminated with a NULL sentinel.
  * stdout/stderr of the child are inherited from the parent.
- *
  * Returns 0 on success (exit status 0), -1 otherwise.
+ */
+static int exec_toolv(const char **argv)
+{
+    pid_t pid = fork();
+    if (pid < 0) {
+        log_error("exec_toolv: fork failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    if (pid == 0) {
+        execv(argv[0], (char *const *)argv);
+        /* execv only returns on error. */
+        _exit(127);
+    }
+
+    int status;
+    if (waitpid(pid, &status, 0) < 0) {
+        log_error("exec_toolv: waitpid failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        log_error("exec_toolv: '%s' exited with status %d\n",
+                  argv[0], WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+        return -1;
+    }
+    return 0;
+}
+
+/*
+ * exec_tool – varargs wrapper around exec_toolv.
  *
- * This is the preferred way to invoke img4, ldid2, iBoot64Patcher, and
- * tsschecker.  Using execv rather than popen()/system() eliminates shell
- * injection risk when paths or arguments contain spaces or special chars.
+ * Pass the executable path as the first argument, then all additional
+ * arguments as separate (const char *) strings, terminated by a NULL
+ * sentinel.  Each argument must be a distinct string — never pass a single
+ * string containing spaces expecting the shell to split it.
+ *
+ * Example:
+ *   exec_tool("/usr/bin/foo", "-a", "-b", "value", NULL);
  */
 static int exec_tool(const char *path, ...)
 {
-    /* Count arguments and build argv. */
+    /* Count arguments to size argv. */
     va_list ap;
     int argc = 1; /* path itself */
     va_start(ap, path);
     while (va_arg(ap, const char *) != NULL) argc++;
     va_end(ap);
 
+    /* Allocate argv: argc entries + 1 NULL terminator. */
     const char **argv = malloc(((size_t)argc + 1) * sizeof(char *));
     if (!argv) return -1;
 
     argv[0] = path;
     va_start(ap, path);
-    for (int i = 1; i <= argc; i++)
+    for (int i = 1; i < argc; i++)
         argv[i] = va_arg(ap, const char *);
     va_end(ap);
-    /* argv[argc] is NULL from the sentinel va_arg read above. */
+    argv[argc] = NULL; /* explicit NULL terminator — do not rely on sentinel */
 
-    pid_t pid = fork();
-    if (pid < 0) {
-        log_error("exec_tool: fork failed: %s\n", strerror(errno));
-        free(argv);
-        return -1;
-    }
-
-    if (pid == 0) {
-        execv(path, (char *const *)argv);
-        /* execv only returns on error. */
-        _exit(127);
-    }
-
+    int ret = exec_toolv(argv);
     free(argv);
-
-    int status;
-    if (waitpid(pid, &status, 0) < 0) {
-        log_error("exec_tool: waitpid failed: %s\n", strerror(errno));
-        return -1;
-    }
-
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        log_error("exec_tool: '%s' exited with status %d\n",
-                  path, WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-        return -1;
-    }
-    return 0;
+    return ret;
 }
 
 /*
@@ -765,8 +776,12 @@ static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * ensure_tool – decompress <name>.gz if the binary is not yet present,
- * then make it executable.  Paths are resolved relative to g_tool_dir.
+ * ensure_tool – make sure the named tool binary exists and is executable.
+ *
+ * In the flat release layout tools arrive already decompressed alongside
+ * gastera1n.  The .gz fallback handles the legacy case where archives were
+ * not pre-decompressed at staging time.  Both paths are resolved relative
+ * to g_tool_dir.
  */
 static int ensure_tool(const char *name)
 {
@@ -803,10 +818,17 @@ static int stage_ensure_tools(void)
     if (ensure_tool(TOOL_IBOOT64PATCHER) != 0) return -1;
     if (ensure_tool(TOOL_TSSCHECKER)     != 0) return -1;
 
-    /* restored_external is a data file, not a tool — decompress separately. */
-    if (access("restored_external", F_OK) != 0 &&
-        access("restored_external.gz", F_OK) == 0) {
-        if (gunzip_file("restored_external.gz", "restored_external") != 0) {
+    /*
+     * restored_external is a data file, not a tool.  It lives alongside the
+     * other binaries in g_tool_dir (same flat layout).  Decompress from
+     * g_tool_dir if not yet present there.
+     */
+    char re_bin[PATH_MAX], re_gz[PATH_MAX];
+    snprintf(re_bin, sizeof(re_bin), "%s/restored_external",    g_tool_dir);
+    snprintf(re_gz,  sizeof(re_gz),  "%s/restored_external.gz", g_tool_dir);
+
+    if (access(re_bin, F_OK) != 0 && access(re_gz, F_OK) == 0) {
+        if (gunzip_file(re_gz, re_bin) != 0) {
             log_error("stage_ensure_tools: failed to decompress restored_external.gz\n");
             return -1;
         }
@@ -853,10 +875,15 @@ static int stage_prepare(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    char bootim_dst[PATH_MAX];
+    /*
+     * Copy the boot image from g_tool_dir (flat layout) into staging.
+     */
+    char bootim_src[PATH_MAX], bootim_dst[PATH_MAX];
+    snprintf(bootim_src, sizeof(bootim_src),
+             "%s/bootim@750x1334.im4p", g_tool_dir);
     snprintf(bootim_dst, sizeof(bootim_dst),
              "%s/bootim@750x1334.im4p", ctx->staging);
-    if (file_copy("bootim@750x1334.im4p", bootim_dst) != 0) {
+    if (file_copy(bootim_src, bootim_dst) != 0) {
         log_error("stage_prepare: failed to copy boot image\n");
         return -1;
     }
@@ -1015,8 +1042,14 @@ static int stage_patch_kernel(rdsk_ctx_t *ctx)
     return 0;
 }
 
-/* Patch one iBoot image (iBEC or iBSS) with iBoot64Patcher (exec_tool). */
-static int patch_iboot(const char *path, const char *extra_flags)
+/*
+ * patch_iboot – patch one iBoot image (iBEC or iBSS) with iBoot64Patcher.
+ *
+ * Extra flags for iBEC are passed as separate argv tokens, not as a single
+ * pre-quoted string.  execv does not perform shell word-splitting, so each
+ * flag must be its own argument.
+ */
+static int patch_iboot(const char *path, bool is_ibec)
 {
     char iboot_bin[PATH_MAX];
     tool_path(TOOL_IBOOT64PATCHER, iboot_bin);
@@ -1025,16 +1058,18 @@ static int patch_iboot(const char *path, const char *extra_flags)
     snprintf(in,  sizeof(in),  "%s.dec", path);
     snprintf(out, sizeof(out), "%s.pwn", path);
 
-    if (extra_flags)
-        return exec_tool(iboot_bin, in, out, extra_flags, NULL);
-    else
+    if (is_ibec) {
+        /* Each flag is a separate argument — never pack them into one string. */
+        return exec_tool(iboot_bin, in, out, "-n", "-b", "rd=md0 -v", NULL);
+    } else {
         return exec_tool(iboot_bin, in, out, NULL);
+    }
 }
 
 static int stage_patch_iboot(rdsk_ctx_t *ctx)
 {
-    if (patch_iboot(ctx->ibec, "-n -b \"rd=md0 -v\"") != 0) return -1;
-    if (patch_iboot(ctx->ibss, NULL)                  != 0) return -1;
+    if (patch_iboot(ctx->ibec, true)  != 0) return -1;
+    if (patch_iboot(ctx->ibss, false) != 0) return -1;
     return 0;
 }
 
@@ -1056,12 +1091,17 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     char ldid2_bin[PATH_MAX];
     tool_path(TOOL_LDID2, ldid2_bin);
 
-    char hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
+    char re_src[PATH_MAX];   /* source binary from tool dir */
+    char hax[PATH_MAX];      /* patched copy in staging     */
+    char plist[PATH_MAX];    /* captured entitlements       */
+    char dst_bin[PATH_MAX];  /* target inside ramdisk       */
+
+    snprintf(re_src,  sizeof(re_src),  "%s/restored_external",              g_tool_dir);
     snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",          ctx->staging);
     snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",         ctx->staging);
     snprintf(dst_bin, sizeof(dst_bin), "%s/usr/local/bin/restored_external", ctx->mount);
 
-    if (file_copy("restored_external", hax) != 0) {
+    if (file_copy(re_src, hax) != 0) {
         log_error("patch_restored_external: failed to copy binary\n");
         return -1;
     }
@@ -1086,13 +1126,25 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     fclose(pf);
     free(ents);
 
-    /* Re-sign patched binary. */
-    if (exec_tool(ldid2_bin, "-M", dup_printf("-S%s", plist), hax, NULL) != 0) {
-        log_error("patch_restored_external: ldid2 -M failed\n");
+    /*
+     * Re-sign patched binary.  Build the -S<plist> flag as a separate
+     * heap string so it can be freed after the call.
+     */
+    char *sflag = dup_printf("-S%s", plist);
+    if (!sflag) {
+        log_error("patch_restored_external: out of memory for -S flag\n");
         unlink(hax); unlink(plist);
         return -1;
     }
+    int ret = exec_tool(ldid2_bin, "-M", sflag, hax, NULL);
+    free(sflag);
     unlink(plist);
+
+    if (ret != 0) {
+        log_error("patch_restored_external: ldid2 -M failed\n");
+        unlink(hax);
+        return -1;
+    }
 
     if (rename(hax, dst_bin) != 0) {
         log_error("patch_restored_external: rename failed: %s\n", strerror(errno));
@@ -1106,9 +1158,16 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 {
     log_info("Building ramdisk...");
 
-    /* Reassemble split archive if necessary. */
-    if (access("ssh64.tar.gz", F_OK) != 0)
-        if (shell_cmd("cat ssh64.tar.gz.* > ssh64.tar.gz") != 0)
+    /*
+     * ssh64.tar.gz may be split across ssh64.tar.gz.* parts.
+     * Resolve both paths relative to g_tool_dir.
+     */
+    char ssh64_gz[PATH_MAX], ssh64_glob[PATH_MAX];
+    snprintf(ssh64_gz,   sizeof(ssh64_gz),   "%s/ssh64.tar.gz",   g_tool_dir);
+    snprintf(ssh64_glob, sizeof(ssh64_glob), "%s/ssh64.tar.gz.*", g_tool_dir);
+
+    if (access(ssh64_gz, F_OK) != 0)
+        if (shell_cmd("cat %s > '%s'", ssh64_glob, ssh64_gz) != 0)
             return -1;
 
     char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
@@ -1153,8 +1212,8 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         if (mkdir_p(sshd, 0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir sshd failed");
     }
 
-    if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf ssh64.tar.gz",
-                  ctx->mount) != 0)
+    if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf '%s'",
+                  ctx->mount, ssh64_gz) != 0)
         RDSK_FAIL("stage_build_ramdisk: tar extract failed");
 
     if (shell_cmd(
@@ -1211,10 +1270,6 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
     /*
      * Each img4 invocation is independent; run them sequentially via
      * exec_tool so that arguments are never subject to shell splitting.
-     *
-     * Paths that include the staging directory prefix are safe as long as
-     * STAGING_DIR itself contains no special characters — a reasonable
-     * assumption for a fixed /tmp path.
      */
     struct {
         const char *in;
@@ -1223,50 +1278,65 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
         const char *type;    /* -T argument */
         bool        apple;   /* pass -A flag */
     } steps[] = {
-        { ctx->kernelcache,  ctx->kernelcache_img4,  "kc.bpatch", "rkrn", false },
-        { ctx->trustcache,   ctx->trustcache_img4,   NULL,         "rtsc", false },
-        /* rdsk.dmg lives in staging, referenced by path */
-        { NULL /* rdsk */,   ctx->ramdisk_img4,      NULL,         "rdsk", true  },
-        { ctx->devicetree,   ctx->devicetree_img4,   NULL,         "rdtr", false },
-        { "bootim@750x1334.im4p", ctx->bootim_img4,  NULL,         "rlgo", true  },
-        { NULL /* ibec */,   ctx->ibec_img4,         NULL,         "ibec", true  },
-        { NULL /* ibss */,   ctx->ibss_img4,         NULL,         "ibss", true  },
+        { ctx->kernelcache,       ctx->kernelcache_img4, NULL /* set below */, "rkrn", false },
+        { ctx->trustcache,        ctx->trustcache_img4,  NULL,                  "rtsc", false },
+        { NULL /* rdsk, set below */, ctx->ramdisk_img4, NULL,                  "rdsk", true  },
+        { ctx->devicetree,        ctx->devicetree_img4,  NULL,                  "rdtr", false },
+        { NULL /* bootim */,      ctx->bootim_img4,      NULL,                  "rlgo", true  },
+        { NULL /* ibec */,        ctx->ibec_img4,        NULL,                  "ibec", true  },
+        { NULL /* ibss */,        ctx->ibss_img4,        NULL,                  "ibss", true  },
     };
 
-    /* Fill in the NULL in-paths that need construction. */
+    /* Fill in paths that require runtime construction. */
     char rdsk_dmg[PATH_MAX], ibec_pwn[PATH_MAX], ibss_pwn[PATH_MAX];
-    snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg",  ctx->staging);
-    snprintf(ibec_pwn, sizeof(ibec_pwn), "%s.pwn",        ctx->ibec);
-    snprintf(ibss_pwn, sizeof(ibss_pwn), "%s.pwn",        ctx->ibss);
-    steps[2].in = rdsk_dmg;
-    steps[5].in = ibec_pwn;
-    steps[6].in = ibss_pwn;
+    char kc_patch[PATH_MAX], bootim_src[PATH_MAX];
 
-    /* Patch file path (only kernelcache uses one). */
-    char kc_patch[PATH_MAX];
-    snprintf(kc_patch, sizeof(kc_patch), "%s/kc.bpatch", ctx->staging);
+    snprintf(rdsk_dmg,   sizeof(rdsk_dmg),   "%s/rdsk.dmg",              ctx->staging);
+    snprintf(ibec_pwn,   sizeof(ibec_pwn),   "%s.pwn",                   ctx->ibec);
+    snprintf(ibss_pwn,   sizeof(ibss_pwn),   "%s.pwn",                   ctx->ibss);
+    snprintf(kc_patch,   sizeof(kc_patch),   "%s/kc.bpatch",             ctx->staging);
+    snprintf(bootim_src, sizeof(bootim_src), "%s/bootim@750x1334.im4p",  ctx->staging);
+
     steps[0].patch = kc_patch;
+    steps[2].in    = rdsk_dmg;
+    steps[4].in    = bootim_src;
+    steps[5].in    = ibec_pwn;
+    steps[6].in    = ibss_pwn;
 
     for (size_t i = 0; i < sizeof(steps)/sizeof(steps[0]); i++) {
         int r;
         if (steps[i].patch) {
             r = steps[i].apple
-                ? exec_tool(img4_bin, "-i", steps[i].in, "-o", steps[i].out,
-                            "-P", steps[i].patch,
-                            "-M", ctx->im4m, "-A",
-                            "-T", steps[i].type, NULL)
-                : exec_tool(img4_bin, "-i", steps[i].in, "-o", steps[i].out,
+                ? exec_tool(img4_bin,
+                            "-i", steps[i].in,
+                            "-o", steps[i].out,
                             "-P", steps[i].patch,
                             "-M", ctx->im4m,
-                            "-T", steps[i].type, NULL);
+                            "-A",
+                            "-T", steps[i].type,
+                            NULL)
+                : exec_tool(img4_bin,
+                            "-i", steps[i].in,
+                            "-o", steps[i].out,
+                            "-P", steps[i].patch,
+                            "-M", ctx->im4m,
+                            "-T", steps[i].type,
+                            NULL);
         } else {
             r = steps[i].apple
-                ? exec_tool(img4_bin, "-i", steps[i].in, "-o", steps[i].out,
-                            "-M", ctx->im4m, "-A",
-                            "-T", steps[i].type, NULL)
-                : exec_tool(img4_bin, "-i", steps[i].in, "-o", steps[i].out,
+                ? exec_tool(img4_bin,
+                            "-i", steps[i].in,
+                            "-o", steps[i].out,
                             "-M", ctx->im4m,
-                            "-T", steps[i].type, NULL);
+                            "-A",
+                            "-T", steps[i].type,
+                            NULL)
+                : exec_tool(img4_bin,
+                            "-i", steps[i].in,
+                            "-o", steps[i].out,
+                            "-M", ctx->im4m,
+                            "-T", steps[i].type,
+                            NULL);
         }
         if (r != 0) {
             log_error("stage_build_img4: img4 failed on step %zu (out=%s)\n",
