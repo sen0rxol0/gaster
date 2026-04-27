@@ -34,16 +34,28 @@ LIBS    += -framework CoreFoundation -framework IOKit
 # libplist and libirecovery live in the host app's Frameworks bundle.
 # Link dynamically so the linker records the load command; the host app
 # already owns the canonical dylibs — do NOT statically link them.
+#
+# On macOS the sysroot contains no actual libplist/libirecovery archive
+# (build.sh removes them after installing headers).  We therefore must NOT
+# pass -L$(LIBS_DIR)/lib here, because ld would search that directory first
+# and fail with "library not found for -lplist-2.0".  Instead we rely on
+# the -rpath entries below so dyld finds the host Frameworks/ copies at
+# runtime; for link-time resolution we search the SDK and system lib dirs
+# by omitting any explicit -L override for these two libraries.
 LIBS    += -lplist-2.0 -lirecovery-1.0
-# Provide the sysroot lib dir so the linker can find the dylibs at build time.
-LDFLAGS += -L$(LIBS_DIR)/lib
 # Embed an LC_RPATH so dyld resolves the dylibs from Contents/Frameworks/
 # at runtime when the binary sits at Contents/MacOS/gastera1n.
 LDFLAGS += -Wl,-rpath,@executable_path/../../Frameworks
+# Also cover the flat bundle layout (gastera1n alongside Frameworks/).
+LDFLAGS += -Wl,-rpath,@executable_path/../Frameworks
 else
-# Linux — libplist and libirecovery are macOS-specific; omit them.
+# Linux — libplist and libirecovery are macOS-specific (DFU/recovery mode
+# via IOKit + CoreFoundation is not available on Linux).  Omit them entirely
+# to avoid linker errors on systems where the host packages are absent.
 CFLAGS  += -fdata-sections -ffunction-sections
 LDFLAGS += -static -no-pie -Wl,--gc-sections
+# Point the linker at our static sysroot so libgeneral/libfragmentzip are found.
+LDFLAGS += -L$(LIBS_DIR)/lib
 endif
 
 CFLAGS += -Os -g
