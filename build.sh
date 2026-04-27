@@ -347,7 +347,7 @@ build_img4() {
     log "Building img4lib / img4 tool"
     cd "${_SRC_ROOT}/img4lib"
 
-    "${MAKE_BIN}" -C lzfse [CC="cross-cc"] [LD="cross-ld"] -j"${NCPU}"
+    "${MAKE_BIN}" -C lzfse -j"${NCPU}"
 
     if [[ "${TARGET_PLATFORM}" == "macos" ]]; then
         "${MAKE_BIN}" -j"${NCPU}" COMMONCRYPTO=1
