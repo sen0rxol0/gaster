@@ -276,15 +276,18 @@ build_static_libs() {
     #   headers + .pc files for compile/link resolution; the actual shared
     #   library at runtime is the one embedded in the host application.
     #   The static archive is removed after install to prevent accidental
-    #   static linking against it.
+    #   static linking against it, which would fail on platforms where the
+    #   host already provides the shared library.
     # -----------------------------------------------------------------------
     log "Building libplist ${LIBPLIST_VERSION} (headers/pkgconfig only)"
     build_autotools "${_SRC_ROOT}/libplist" \
         "${common_args[@]}" \
         --disable-shared --enable-static --without-cython
-    
-    #rm -f "${_SYSROOT}${PREFIX}/lib/libplist"*.a \
-    #      "${_SYSROOT}${PREFIX}/lib/libplist"*.la
+
+    # Remove static archives so nothing accidentally links them statically.
+    # The host application provides the real shared libraries at runtime.
+    rm -f "${_SYSROOT}${PREFIX}/lib/libplist"*.a \
+          "${_SYSROOT}${PREFIX}/lib/libplist"*.la
 
     # libfragmentzip depends on libgeneral and libplist – both must be built first.
     log "Building libfragmentzip (static)"
@@ -300,8 +303,10 @@ build_static_libs() {
     build_autotools "${_SRC_ROOT}/libirecovery" \
         "${common_args[@]}" \
         --disable-shared --enable-static
-    #rm -f "${_SYSROOT}${PREFIX}/lib/libirecovery"*.a \
-    #      "${_SYSROOT}${PREFIX}/lib/libirecovery"*.la
+
+    # Remove static archives for the same reason as libplist above.
+    rm -f "${_SYSROOT}${PREFIX}/lib/libirecovery"*.a \
+          "${_SYSROOT}${PREFIX}/lib/libirecovery"*.la
 
     # Inject pkg-config stubs so gastera1n's Makefile resolves the correct
     # -l flags for the host-embedded shared libraries.
@@ -318,14 +323,13 @@ _inject_host_pc_stubs() {
 
     # The static archives for libplist and libirecovery were removed after
     # install, so the sysroot libdir contains NO actual library files for
-    # these two deps.  The original stubs set libdir to the (empty) sysroot
-    # prefix and emitted a bare -l flag — causing ld to search that empty
-    # directory first and fail with "library not found".
+    # these two deps.
     #
-    # Fix: omit -L entirely on macOS (the @rpath entries already in LDFLAGS
-    # point the dynamic linker at the host Frameworks/ bundle) and on Linux
-    # probe the real system multiarch libdir so we emit a concrete -L only
-    # when the shared library is actually present there.
+    # On macOS: omit -L entirely; the @rpath entries already in LDFLAGS
+    # point the dynamic linker at the host Frameworks/ bundle.
+    #
+    # On Linux: probe the real system multiarch libdir and emit a concrete
+    # -L only when the shared library is actually present there.
 
     local extra_libs_plist=""
     local extra_libs_irecovery=""
@@ -396,7 +400,7 @@ EOF
 build_img4() {
     log "Building img4lib / img4 tool"
     cd "${_SRC_ROOT}/img4lib"
-    
+
     if [[ "${TARGET_PLATFORM}" == "macos" ]]; then
         local CFLAGS="-isysroot $(xcrun --sdk macosx --show-sdk-path) -mmacosx-version-min=10.13 -fPIC"
         "${MAKE_BIN}" -C lzfse CFLAGS="${CFLAGS}" -j"${NCPU}"
@@ -473,29 +477,46 @@ fix_linux_strip() {
 # A platform-only fallback (e.g. tsschecker_macOS.gz) is accepted when no
 # arch-specific archive exists.
 #
-# The release tree layout:
-#
-#   tools/
-#     macos/
-#       arm64/
-#       x86_64/
-#       universal/      ← populated during the merge step
-#     linux/
-#       x86_64/
-#       arm64/
+# Release layout: all tools are placed FLAT alongside the gastera1n binary,
+# named without any architecture or platform suffix.
 # ---------------------------------------------------------------------------
 
-_tool_archives_for() {
+# Decompress a single tool archive into the destination directory, naming
+# the output binary after the tool with no arch/platform suffix.
+#
+#   _install_tool_archive <archive.gz> <tool_name> <dest_dir>
+_install_tool_archive() {
+    local archive="$1"
+    local tool_name="$2"
+    local dest_dir="$3"
+
+    local tmp
+    tmp="$(mktemp)"
+    gunzip -c "${archive}" > "${tmp}"
+    install -m 755 "${tmp}" "${dest_dir}/${tool_name}"
+    rm -f "${tmp}"
+    log "  installed tool: ${tool_name}"
+}
+
+# For each companion tool, find the best matching archive for the given
+# platform/arch and install it (decompressed, clean name) into dest_dir.
+#
+#   _install_companion_tools <platform> <arch> <dest_dir>
+_install_companion_tools() {
     local platform="$1"
     local arch="$2"
-    # img4 is built from source – excluded from this list deliberately.
+    local dest_dir="$3"
+
+    # img4 is built from source; excluded from this list deliberately.
     local tools=(ldid2 iBoot64Patcher tsschecker)
+
     local t
     for t in "${tools[@]}"; do
+        # Preference order: arch-specific → platform-only → skip
         if   [[ -f "${ROOT_DIR}/${t}_${platform}_${arch}.gz" ]]; then
-            echo "${t}_${platform}_${arch}.gz"
+            _install_tool_archive "${ROOT_DIR}/${t}_${platform}_${arch}.gz" "${t}" "${dest_dir}"
         elif [[ -f "${ROOT_DIR}/${t}_${platform}.gz" ]]; then
-            echo "${t}_${platform}.gz"
+            _install_tool_archive "${ROOT_DIR}/${t}_${platform}.gz" "${t}" "${dest_dir}"
         else
             warn "Archive not found for '${t}' on ${platform}/${arch} – skipping"
         fi
@@ -505,12 +526,16 @@ _tool_archives_for() {
 # ---------------------------------------------------------------------------
 # Release tree staging
 #
+# All tools (img4 + companions) are placed FLAT in the same directory as the
+# gastera1n binary — no tools/ subdirectory, no arch/platform suffixes.
+#
 # Layout:
 #   <release>/
 #     gastera1n
-#     tools/
-#       <platform>/
-#         <arch>/        ← compressed tool archives
+#     img4
+#     ldid2
+#     iBoot64Patcher
+#     tsschecker
 #     LICENSE
 #     README*
 #     restored_external.gz
@@ -528,24 +553,18 @@ stage_release_tree() {
 
     install -m 755 "${gastera1n_bin}" "${release_dir}/gastera1n"
 
-    # Companion tools directory
-    local tools_dir="${release_dir}/tools/${platform}/${arch}"
-    mkdir -p "${tools_dir}"
-
-    # img4 is built from source; install the binary directly from the sysroot.
+    # img4 is built from source; install the binary directly from the sysroot,
+    # flat alongside gastera1n with no arch/platform suffix.
     local img4_bin="${_SYSROOT}${PREFIX}/bin/img4"
     if [[ -x "${img4_bin}" ]]; then
-        install -m 755 "${img4_bin}" "${tools_dir}/img4"
+        install -m 755 "${img4_bin}" "${release_dir}/img4"
     else
         warn "img4 binary not found in sysroot -- skipping"
     fi
 
-    # Pre-built tool archives (ldid2, iBoot64Patcher, tsschecker)
-    local archive
-    while IFS= read -r archive; do
-        [[ -n "${archive}" ]] || continue
-        cp -v "${ROOT_DIR}/${archive}" "${tools_dir}/"
-    done < <(_tool_archives_for "${platform}" "${arch}")
+    # Pre-built tool archives (ldid2, iBoot64Patcher, tsschecker):
+    # decompressed and installed flat alongside gastera1n.
+    _install_companion_tools "${platform}" "${arch}" "${release_dir}"
 
     # Static assets – warn but do not abort on missing optional files
     local asset
@@ -621,6 +640,11 @@ build_single() {
 
 # ---------------------------------------------------------------------------
 # Universal macOS merge
+#
+# The universal release is produced by lipo-merging gastera1n and all Mach-O
+# tool binaries from the arm64 and x86_64 single-arch releases.  Since tools
+# are now flat (no nested tools/ dir), we simply walk the release tree,
+# lipo-merge every matching Mach-O pair, and copy non-Mach-O files verbatim.
 # ---------------------------------------------------------------------------
 merge_universal_release() {
     local arm_release="$1"
@@ -646,56 +670,6 @@ merge_universal_release() {
             lipo -create "${file}" "${other}" -output "${out}"
         fi
     done < <(find "${arm_release}" -type f -print0)
-
-    # Merge companion tool archives into tools/macos/universal/
-    local univ_tools="${universal_release}/tools/macos/universal"
-    mkdir -p "${univ_tools}"
-
-    local arm_tools="${arm_release}/tools/macos/arm64"
-    local x86_tools="${x86_release}/tools/macos/x86_64"
-
-    if [[ -d "${arm_tools}" && -d "${x86_tools}" ]]; then
-        local gz
-        for gz in "${arm_tools}"/*.gz; do
-            [[ -f "${gz}" ]] || continue
-            local name
-            name="$(basename "${gz}")"
-
-            # Derive the x86_64 counterpart: replace _arm64 with _x86_64 in name
-            local x86_gz="${x86_tools}/${name//_arm64/_x86_64}"
-            [[ -f "${x86_gz}" ]] || x86_gz="${x86_tools}/${name}"
-
-            if [[ -f "${x86_gz}" ]]; then
-                local tmp_arm tmp_x86 tmp_out
-                tmp_arm="$(mktemp)"
-                tmp_x86="$(mktemp)"
-                tmp_out="$(mktemp)"
-
-                gunzip -c "${gz}"     > "${tmp_arm}"
-                gunzip -c "${x86_gz}" > "${tmp_x86}"
-
-                # Strip arch/platform suffixes to build a clean universal name
-                local tool_base="${name%.gz}"
-                tool_base="${tool_base%%_macOS*}"
-                tool_base="${tool_base%%_arm64*}"
-
-                if is_macho "${tmp_arm}" && is_macho "${tmp_x86}"; then
-                    lipo -create "${tmp_arm}" "${tmp_x86}" -output "${tmp_out}"
-                    gzip -9 -c "${tmp_out}" > "${univ_tools}/${tool_base}_macOS_universal.gz"
-                    log "  lipo tool: ${tool_base}"
-                else
-                    # Non-Mach-O (scripts, data) – keep the arm64 variant
-                    cp "${gz}" "${univ_tools}/"
-                fi
-
-                rm -f "${tmp_arm}" "${tmp_x86}" "${tmp_out}"
-            else
-                cp "${gz}" "${univ_tools}/"
-            fi
-        done
-    else
-        warn "Tool archive directories not found; tools/macos/universal/ will be empty"
-    fi
 
     log "Universal merge complete: ${universal_release}"
 }
