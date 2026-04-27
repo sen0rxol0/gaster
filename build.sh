@@ -85,7 +85,6 @@ NCPU="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
 WORK_ROOT="${WORK_ROOT:-${ROOT_DIR}/.build/${TARGET_PLATFORM}-${TARGET_ARCH}}"
 DIST_ROOT="${DIST_ROOT:-${ROOT_DIR}/dist}"
-XCODE_APP="${XCODE_APP:-/Applications/Xcode.app}"
 
 # Version string embedded in release directory names
 GASTER_VERSION="v1.0"
@@ -134,8 +133,6 @@ setup_macos_env() {
     local arch="$1"
     local sdk minos host_triple
 
-    [[ -d "${XCODE_APP}" ]] || die "Xcode not found at ${XCODE_APP}"
-    export DEVELOPER_DIR="${XCODE_APP}/Contents/Developer"
     sdk="$(xcrun -sdk macosx --show-sdk-path)"
 
     case "${arch}" in
@@ -350,7 +347,7 @@ build_img4() {
     log "Building img4lib / img4 tool"
     cd "${_SRC_ROOT}/img4lib"
 
-    "${MAKE_BIN}" -C lzfse -j"${NCPU}"
+    "${MAKE_BIN}" -C lzfse [CC="cross-cc"] [LD="cross-ld"] -j"${NCPU}"
 
     if [[ "${TARGET_PLATFORM}" == "macos" ]]; then
         "${MAKE_BIN}" -j"${NCPU}" COMMONCRYPTO=1
