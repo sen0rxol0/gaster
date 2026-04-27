@@ -4,11 +4,7 @@
 #include <stdbool.h>
 #include <libirecovery.h>
 
-/*
- * Runtime flags – defined in ideviceenterramdisk.c.
- * Use bool: these are purely on/off switches.
- */
-extern bool ramdiskBootMode; /* true  → skip prepare/download/patch, boot directly */
+bool ramdiskBootMode; /* true  → skip prepare/download/patch, boot directly */
 
 /*
  * ideviceenterramdisk_set_tool_dir – must be called before any other
