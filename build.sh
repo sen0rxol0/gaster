@@ -346,10 +346,10 @@ EOF
 build_img4() {
     log "Building img4lib / img4 tool"
     cd "${_SRC_ROOT}/img4lib"
-
-    "${MAKE_BIN}" -C lzfse -j"${NCPU}"
-
+    
     if [[ "${TARGET_PLATFORM}" == "macos" ]]; then
+        local CFLAGS="-isysroot $(xcrun --sdk macosx --show-sdk-path) -mmacosx-version-min=10.13 -fPIC"
+        "${MAKE_BIN}" -C lzfse CFLAGS="${CFLAGS}" -j"${NCPU}"
         "${MAKE_BIN}" -j"${NCPU}" COMMONCRYPTO=1
     else
         "${MAKE_BIN}" -j"${NCPU}"
