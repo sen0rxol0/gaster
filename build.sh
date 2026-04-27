@@ -7,7 +7,7 @@
 #   Linux x86_64 / arm64 (aarch64)
 #
 # Assumptions:
-#   • The host application already embeds libplist 2.0.2 and libirecovery 1.0.0
+#   • The host application already embeds libplist 2.2.0 and libirecovery 1.0.0
 #     as shared libraries inside its own bundle/package.  This script therefore
 #     links *against* those ABI-stable dylibs/SOs but does NOT copy them into
 #     the release tree.
@@ -112,7 +112,7 @@ clone_sources() {
     git clone --quiet https://github.com/tihmstar/libfragmentzip.git
     git -C libfragmentzip checkout --quiet "92f184e631c7156113850afdb9c68a2d892e35b6"
 
-    # libplist – pinned to the 2.0.2-era commit; built only for headers + .pc.
+    # libplist – pinned to the 2.2.0 commit; built only for headers + .pc.
     # The actual shared library at runtime comes from the host application.
     git clone --quiet https://github.com/libimobiledevice/libplist.git
     git -C libplist checkout --quiet "c5a30e9267068436a75b5d00fcbf95cb9c1f4dcd"
