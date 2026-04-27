@@ -15,7 +15,7 @@
 #include "gastera1n.h"
 
 extern bool         DEBUG_ENABLED;
-bool         ramdiskBootMode;
+extern bool         ramdiskBootMode;
 bool         pwnDFUMode;
 
 int main(int argc, char **argv)
