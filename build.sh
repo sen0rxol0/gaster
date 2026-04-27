@@ -316,6 +316,54 @@ _inject_host_pc_stubs() {
     local pc_dir="${_SYSROOT}${PREFIX}/lib/pkgconfig"
     mkdir -p "${pc_dir}"
 
+    # The static archives for libplist and libirecovery were removed after
+    # install, so the sysroot libdir contains NO actual library files for
+    # these two deps.  The original stubs set libdir to the (empty) sysroot
+    # prefix and emitted a bare -l flag — causing ld to search that empty
+    # directory first and fail with "library not found".
+    #
+    # Fix: omit -L entirely on macOS (the @rpath entries already in LDFLAGS
+    # point the dynamic linker at the host Frameworks/ bundle) and on Linux
+    # probe the real system multiarch libdir so we emit a concrete -L only
+    # when the shared library is actually present there.
+
+    local extra_libs_plist=""
+    local extra_libs_irecovery=""
+
+    if [[ "${platform}" == "linux" ]]; then
+        for candidate in \
+                "/usr/lib/${HOST_TRIPLE}" \
+                "/usr/lib/$(uname -m)-linux-gnu" \
+                "/usr/lib64" \
+                "/usr/lib"; do
+            if [[ -e "${candidate}/libplist-2.0.so"   || \
+                  -e "${candidate}/libplist-2.0.so.3" ]]; then
+                extra_libs_plist="-L${candidate}"
+                break
+            fi
+        done
+        for candidate in \
+                "/usr/lib/${HOST_TRIPLE}" \
+                "/usr/lib/$(uname -m)-linux-gnu" \
+                "/usr/lib64" \
+                "/usr/lib"; do
+            if [[ -e "${candidate}/libirecovery-1.0.so"   || \
+                  -e "${candidate}/libirecovery-1.0.so.0" ]]; then
+                extra_libs_irecovery="-L${candidate}"
+                break
+            fi
+        done
+
+        # Non-fatal warnings so CI logs surface missing host packages early.
+        if ! ldconfig -p 2>/dev/null | grep -q "libplist-2.0"; then
+            warn "libplist-2.0 not found in ldconfig cache -- install the host package before linking gastera1n"
+        fi
+        if ! ldconfig -p 2>/dev/null | grep -q "libirecovery-1.0"; then
+            warn "libirecovery-1.0 not found in ldconfig cache -- install the host package before linking gastera1n"
+        fi
+    fi
+    # On macOS: no -L emitted; @rpath in LDFLAGS resolves the host Frameworks/.
+
     cat > "${pc_dir}/libplist-2.0.pc" <<EOF
 prefix=${PREFIX}
 exec_prefix=\${prefix}
@@ -325,7 +373,8 @@ includedir=\${prefix}/include
 Name: libplist
 Description: Library for working with Apple Binary and XML Property Lists (host-embedded)
 Version: ${LIBPLIST_VERSION}
-Libs: -lplist-2.0
+Libs: ${extra_libs_plist} -lplist-2.0
+Libs.private:
 Cflags: -I\${includedir}
 EOF
 
@@ -338,7 +387,8 @@ includedir=\${prefix}/include
 Name: libirecovery
 Description: Library for talking to Apple devices in DFU/Recovery mode (host-embedded)
 Version: ${LIBIRECOVERY_VERSION}
-Libs: -lirecovery-1.0
+Libs: ${extra_libs_irecovery} -lirecovery-1.0
+Libs.private:
 Cflags: -I\${includedir}
 EOF
 }
