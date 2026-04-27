@@ -1418,7 +1418,7 @@ int ideviceenterramdisk_load(void)
     rdsk_ctx_t ctx;
     ctx_init(&ctx);
 
-    if (ramdiskBootMode == 1)
+    if (ramdiskBootMode)
         return stage_boot_ramdisk(&ctx);
 
     if (stage_prepare(&ctx)         != 0) return -1;
