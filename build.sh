@@ -283,8 +283,9 @@ build_static_libs() {
     build_autotools "${_SRC_ROOT}/libplist" \
         "${common_args[@]}" \
         --disable-shared --enable-static --without-cython
-    rm -f "${_SYSROOT}${PREFIX}/lib/libplist"*.a \
-          "${_SYSROOT}${PREFIX}/lib/libplist"*.la
+    
+    #rm -f "${_SYSROOT}${PREFIX}/lib/libplist"*.a \
+    #      "${_SYSROOT}${PREFIX}/lib/libplist"*.la
 
     # libfragmentzip depends on libgeneral and libplist – both must be built first.
     log "Building libfragmentzip (static)"
@@ -300,8 +301,8 @@ build_static_libs() {
     build_autotools "${_SRC_ROOT}/libirecovery" \
         "${common_args[@]}" \
         --disable-shared --enable-static
-    rm -f "${_SYSROOT}${PREFIX}/lib/libirecovery"*.a \
-          "${_SYSROOT}${PREFIX}/lib/libirecovery"*.la
+    #rm -f "${_SYSROOT}${PREFIX}/lib/libirecovery"*.a \
+    #      "${_SYSROOT}${PREFIX}/lib/libirecovery"*.la
 
     # Inject pkg-config stubs so gastera1n's Makefile resolves the correct
     # -l flags for the host-embedded shared libraries.
