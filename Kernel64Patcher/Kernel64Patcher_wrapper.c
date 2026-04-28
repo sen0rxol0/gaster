@@ -8,6 +8,12 @@
 #include "Kernel64Patcher_legacy.h"
 #include "KPlooshFinder.h"
 
+extern unsigned char Kernel64Patcher_legacy[];
+extern unsigned int Kernel64Patcher_legacy_len;
+
+extern unsigned char KPlooshFinder[];
+extern unsigned int KPlooshFinder_len;
+
 /*
  * Write an embedded binary to a temp file and return its path.
  * Returns 0 on success, -1 on any I/O error.
