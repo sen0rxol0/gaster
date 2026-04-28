@@ -25,7 +25,8 @@ https://github.com/tihmstar/libfragmentzip
 https://github.com/tihmstar/iBoot64Patcher
 https://github.com/Cryptiiiic/iBoot64Patcher
 https://github.com/Ralph0045/Kernel64Patcher
-https://github.com/verygenericname/Kernel64Patcher
+https://github.com/palera1n/Kernel64Patcher
+https://github.com/palera1n/KPlooshFinder
 https://github.com/verygenericname/kerneldiff_C
 https://github.com/synackuk/belladonna
 https://github.com/libimobiledevice/libirecovery
