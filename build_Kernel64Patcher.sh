@@ -82,8 +82,8 @@ KPF_ARM=$(build_arch kpf "$SRC/KPlooshFinder" arm64 11.0)
 lipo -create "$KPF_X86" "$KPF_ARM" -output "$UNIVERSAL/KPlooshFinder"
 
 
-xxd -i "$UNIVERSAL/Kernel64Patcher_legacy" > "$BUILD/Kernel64Patcher_legacy.h"
-xxd -i "$UNIVERSAL/KPlooshFinder" > "$BUILD/KPlooshFinder.h"
+xxd -i "$UNIVERSAL/Kernel64Patcher_legacy" > "$ROOT/Kernel64Patcher_legacy.h"
+xxd -i "$UNIVERSAL/KPlooshFinder" > "$ROOT/KPlooshFinder.h"
 
 ########################################
 # Build wrapper
