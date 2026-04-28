@@ -8,9 +8,9 @@
  * ───────────────
  * img4 is built as part of this project and resolved at runtime via
  * g_tool_dir (set once by ideviceenterramdisk_set_tool_dir()).  The
- * companion pre-built tools (ldid2, iBoot64Patcher, tsschecker) are
- * expected in the same directory as img4, decompressed on first use by
- * ensure_tool().
+ * companion pre-built tools (ldid2, iBoot64Patcher, tsschecker,
+ * Kernel64Patcher) are expected in the same directory as img4,
+ * decompressed on first use by ensure_tool().
  *
  * Shell usage
  * ───────────
@@ -43,7 +43,8 @@
 #include "ideviceenterramdisk.h"
 #include "ideviceloaders.h"
 #include "gastera1n.h"
-#include "kernel64patcher.h"
+/* kernel64patcher.h removed: kernel patching is now done via the
+   Kernel64Patcher wrapper binary (exec_tool), not the embedded library. */
 #include "kerneldiff.h"
 
 #include <plist/plist.h>
@@ -74,6 +75,7 @@
 #define TOOL_LDID2           "ldid2"
 #define TOOL_TSSCHECKER      "tsschecker"
 #define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
+#define TOOL_KERNEL64PATCHER "Kernel64Patcher"
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -813,10 +815,11 @@ static int ensure_tool(const char *name)
 
 static int stage_ensure_tools(void)
 {
-    if (ensure_tool(TOOL_IMG4)           != 0) return -1;
-    if (ensure_tool(TOOL_LDID2)          != 0) return -1;
-    if (ensure_tool(TOOL_IBOOT64PATCHER) != 0) return -1;
-    if (ensure_tool(TOOL_TSSCHECKER)     != 0) return -1;
+    if (ensure_tool(TOOL_IMG4)            != 0) return -1;
+    if (ensure_tool(TOOL_LDID2)           != 0) return -1;
+    if (ensure_tool(TOOL_IBOOT64PATCHER)  != 0) return -1;
+    if (ensure_tool(TOOL_TSSCHECKER)      != 0) return -1;
+    if (ensure_tool(TOOL_KERNEL64PATCHER) != 0) return -1;
 
     /*
      * restored_external is a data file, not a tool.  It lives alongside the
@@ -1030,15 +1033,55 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
     return 0;
 }
 
+/*
+ * stage_patch_kernel – patch the decrypted kernelcache using the
+ * Kernel64Patcher wrapper binary, then produce a binary diff for img4.
+ *
+ * The wrapper automatically selects Kernel64Patcher (legacy) or
+ * KPlooshFinder based on the iOS version detected in the kernelcache
+ * image, and silently drops flags inappropriate for the selected tool
+ * (see build_tool_argv() in the wrapper source).
+ *
+ * Flags passed here cover the full iOS 15/16 surface; the wrapper will
+ * filter them to the correct subset at runtime:
+ *
+ *   -a   Patch AMFI (both iOS 15 and 16)
+ *   -f   Patch AppleFirmwareUpdate img4 signature check (both)
+ *   -t   Patch tfp0 (both)
+ *   -d   Patch developer mode (both)
+ *   -s   Patch SPUFirmwareValidation (iOS 15 only – dropped for iOS 16)
+ *   -r   Patch RootVPNotAuthenticatedAfterMounting (iOS 15 only)
+ *   -o   Patch could_not_authenticate_personalized_root_hash (iOS 15 only)
+ *   -e   Patch root volume seal is broken (iOS 15 only)
+ *   -u   Patch update_rootfs_rw (iOS 15 only)
+ *
+ * kerneldiff is left unchanged; it still diffs kdec → kpwn to produce
+ * the binary patch file consumed by the img4 stage.
+ */
 static int stage_patch_kernel(rdsk_ctx_t *ctx)
 {
-    char kdec[PATH_MAX], kpwn[PATH_MAX], diff[PATH_MAX];
-    snprintf(kdec, sizeof(kdec), "%s.dec",          ctx->kernelcache);
-    snprintf(kpwn, sizeof(kpwn), "%s.pwn",          ctx->kernelcache);
-    snprintf(diff, sizeof(diff), "%s/kc.bpatch",    ctx->staging);
+    char k64_bin[PATH_MAX];
+    tool_path(TOOL_KERNEL64PATCHER, k64_bin);
 
-    if (kernel64patcher_amfi(kdec, kpwn) != 0) return -1;
-    if (kerneldiff(kdec, kpwn, diff)     != 0) return -1;
+    char kdec[PATH_MAX], kpwn[PATH_MAX], diff[PATH_MAX];
+    snprintf(kdec, sizeof(kdec), "%s.dec",       ctx->kernelcache);
+    snprintf(kpwn, sizeof(kpwn), "%s.pwn",       ctx->kernelcache);
+    snprintf(diff, sizeof(diff), "%s/kc.bpatch", ctx->staging);
+
+    /*
+     * Each flag is a separate argument to exec_tool — never pack them
+     * into a single string.  The wrapper's build_tool_argv() will drop
+     * any flag not valid for the detected iOS version.
+     */
+    if (exec_tool(k64_bin, kdec, kpwn,
+                  "-a", "-f", "-t", "-d",
+                  "-s", "-r", "-o", "-e", "-u",
+                  NULL) != 0) {
+        log_error("stage_patch_kernel: Kernel64Patcher failed\n");
+        return -1;
+    }
+
+    if (kerneldiff(kdec, kpwn, diff) != 0) return -1;
     return 0;
 }
 
