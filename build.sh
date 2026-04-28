@@ -466,7 +466,7 @@ _install_companion_tools() {
     local arch="$2"
     local dest_dir="$3"
 
-    local tools=(ldid2 iBoot64Patcher tsschecker)
+    local tools=(ldid2 tsschecker iBoot64Patcher Kernel64Patcher)
     local t
     for t in "${tools[@]}"; do
         if   [[ -f "${ROOT_DIR}/${t}_${platform}_${arch}.gz" ]]; then
