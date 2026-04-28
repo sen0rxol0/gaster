@@ -444,7 +444,7 @@ fix_linux_strip() {
 #   <tool>_linux_x86_64.gz  <tool>_linux_arm64.gz
 # A platform-only fallback (e.g. tsschecker_macOS.gz) is also accepted.
 #
-# Tools: ldid2, iBoot64Patcher, tsschecker
+# Tools: ldid2, tsschecker, iBoot64Patcher, Kernel64Patcher
 # img4 is built from source and handled separately.
 # ---------------------------------------------------------------------------
 
