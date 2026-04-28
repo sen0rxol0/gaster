@@ -65,8 +65,8 @@ build_project KPlooshFinder "$SRC/KPlooshFinder"
 ########################################
 # Generate embedded headers
 ########################################
-xxd -i "$OUT/Kernel64Patcher" > "$ROOT/Kernel64Patcher_legacy.h"
-xxd -i "$OUT/KPlooshFinder" > "$ROOT/KPlooshFinder.h"
+xxd -i -n Kernel64Patcher_legacy "$OUT/Kernel64Patcher" > "$ROOT/Kernel64Patcher_legacy.h"
+xxd -i -n KPlooshFinder "$OUT/KPlooshFinder" > "$ROOT/KPlooshFinder.h"
 
 ########################################
 # Build wrapper (universal)
