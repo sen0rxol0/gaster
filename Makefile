@@ -65,7 +65,7 @@ CFLAGS += -DBUILD_STYLE="RELEASE" \
 
 LIBS += -lc -lz
 
-SRCC = main.c lzfse.c gastera1n.c ideviceenterramdisk.c kernel64patcher.c kerneldiff.c
+SRCC = main.c lzfse.c gastera1n.c ideviceenterramdisk.c kerneldiff.c
 
 # Generated header files
 PAYLOAD_HEADERS = \
