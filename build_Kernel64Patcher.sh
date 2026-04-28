@@ -3,18 +3,23 @@ set -euo pipefail
 
 ROOT="$(pwd)/Kernel64Patcher"
 SRC="$ROOT/src"
-BUILD="$ROOT/build"
-UNIVERSAL="$ROOT/universal"
+OUT="$ROOT/out"
 RELEASE="$ROOT/release"
 
-mkdir -p "$SRC" "$BUILD" "$UNIVERSAL" "$RELEASE"
+mkdir -p "$SRC" "$OUT" "$RELEASE"
 
 ########################################
-# Dependencies
+# Config
 ########################################
-if command -v brew >/dev/null; then
-    brew install cmake || true
-fi
+JOBS=$(sysctl -n hw.ncpu)
+
+# Universal flags (single build, no lipo needed)
+export ARCH_FLAGS="-arch x86_64 -arch arm64"
+export MIN_VER="-mmacosx-version-min=10.13"
+
+export CC="clang"
+export CFLAGS="-O2 $ARCH_FLAGS $MIN_VER"
+export LDFLAGS="$ARCH_FLAGS $MIN_VER"
 
 ########################################
 # Clone sources
@@ -22,97 +27,81 @@ fi
 cd "$SRC"
 
 [ -d Kernel64Patcher ] || git clone https://github.com/palera1n/Kernel64Patcher.git
+[ -d KPlooshFinder ]   || git clone --recursive https://github.com/palera1n/KPlooshFinder.git
 
-if [ ! -d KPlooshFinder ]; then
-    git clone --recursive https://github.com/palera1n/KPlooshFinder.git
-else
-    cd KPlooshFinder
-    git submodule update --init --recursive
-    cd ..
-fi
+cd KPlooshFinder
+git submodule update --init --recursive
+cd ..
 
 ########################################
-# Generic CMake builder
+# Build function
 ########################################
-build_arch() {
+build_project() {
     NAME=$1
-    SRC_PATH=$2
-    ARCH=$3
-    TARGET=$4
+    DIR=$2
 
-    BUILD_PATH="$BUILD/${NAME}_${ARCH}"
-    INSTALL="$BUILD_PATH/install"
+    echo "== Building $NAME =="
 
-    rm -rf "$BUILD_PATH"
-    mkdir -p "$BUILD_PATH"
-    cd "$BUILD_PATH"
+    pushd "$DIR" >/dev/null
 
-    cmake "$SRC_PATH" \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_OSX_ARCHITECTURES="$ARCH" \
-        -DCMAKE_OSX_DEPLOYMENT_TARGET="$TARGET" \
-        -DCMAKE_INSTALL_PREFIX="$INSTALL"
+    make clean || true
+    make -j"$JOBS"
 
-    cmake --build . --parallel
-    cmake --install .
+    if [ ! -f "$NAME" ]; then
+        echo "❌ Build failed: $NAME not found"
+        exit 1
+    fi
 
-    # FIX: use -perm /111 (POSIX-compatible) instead of deprecated +111
-    find "$INSTALL" -type f -perm /111 | head -n1
+    cp "$NAME" "$OUT/$NAME"
+    popd >/dev/null
 }
 
 ########################################
-# Build legacy Kernel64Patcher
+# Build all
 ########################################
-echo "== Building Kernel64Patcher =="
-
-K64_X86=$(build_arch k64 "$SRC/Kernel64Patcher" x86_64 10.13)
-K64_ARM=$(build_arch k64 "$SRC/Kernel64Patcher" arm64 11.0)
-
-lipo -create "$K64_X86" "$K64_ARM" -output "$UNIVERSAL/Kernel64Patcher_legacy"
-
+build_project Kernel64Patcher "$SRC/Kernel64Patcher"
+build_project KPlooshFinder "$SRC/KPlooshFinder"
 
 ########################################
-# Build KPlooshFinder
+# Generate embedded headers
 ########################################
-echo "== Building KPlooshFinder =="
-
-KPF_X86=$(build_arch kpf "$SRC/KPlooshFinder" x86_64 10.13)
-KPF_ARM=$(build_arch kpf "$SRC/KPlooshFinder" arm64 11.0)
-
-lipo -create "$KPF_X86" "$KPF_ARM" -output "$UNIVERSAL/KPlooshFinder"
-
-
-xxd -i "$UNIVERSAL/Kernel64Patcher_legacy" > "$ROOT/Kernel64Patcher_legacy.h"
-xxd -i "$UNIVERSAL/KPlooshFinder" > "$ROOT/KPlooshFinder.h"
+xxd -i "$OUT/Kernel64Patcher" > "$ROOT/Kernel64Patcher_legacy.h"
+xxd -i "$OUT/KPlooshFinder" > "$ROOT/KPlooshFinder.h"
 
 ########################################
-# Build wrapper
+# Build wrapper (universal)
 ########################################
 echo "== Building wrapper =="
 
 clang "$ROOT/Kernel64Patcher_wrapper.c" \
+  $ARCH_FLAGS $MIN_VER \
   -O2 \
-  -arch x86_64 -mmacosx-version-min=10.13 \
-  -arch arm64  -mmacosx-version-min=11.0 \
-  -o "$UNIVERSAL/Kernel64Patcher"
-
-# FIX: ad-hoc sign the universal wrapper so it executes on Apple Silicon
-#      under default SIP/Gatekeeper settings without quarantine errors.
-codesign --sign - --force "$UNIVERSAL/Kernel64Patcher"
-codesign --sign - --force "$UNIVERSAL/Kernel64Patcher_legacy"
-codesign --sign - --force "$UNIVERSAL/KPlooshFinder"
+  -o "$OUT/Kernel64Patcher_wrapper"
 
 ########################################
-# Assemble release bundle
+# Codesign (ad-hoc)
 ########################################
-echo "== Creating release bundle =="
+for BIN in \
+  "$OUT/Kernel64Patcher" \
+  "$OUT/KPlooshFinder" \
+  "$OUT/Kernel64Patcher_wrapper"
+do
+  codesign --sign - --force "$BIN"
+done
 
-cp "$UNIVERSAL/Kernel64Patcher"        "$RELEASE/"
-cp "$UNIVERSAL/Kernel64Patcher_legacy" "$RELEASE/"
-cp "$UNIVERSAL/KPlooshFinder"          "$RELEASE/"
+########################################
+# Release bundle (fixed layout)
+########################################
+cp "$OUT/Kernel64Patcher_wrapper" "$RELEASE/Kernel64Patcher"
+cp "$OUT/Kernel64Patcher"         "$RELEASE/Kernel64Patcher_legacy"
+cp "$OUT/KPlooshFinder"           "$RELEASE/KPlooshFinder"
 
+########################################
+# Done
+########################################
 echo
 echo "======================================"
-echo "DONE! Release folder:"
-echo "$RELEASE"
+echo "Build complete"
+echo "Output:   $OUT"
+echo "Release:  $RELEASE"
 echo "======================================"
