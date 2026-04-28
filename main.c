@@ -42,7 +42,8 @@ int main(int argc, char **argv)
     puts("//\thttps://github.com/Cryptiiiic/iBoot64Patcher");
     // FIX: corrected double-slash in the following URLs
     puts("//\thttps://github.com/Ralph0045/Kernel64Patcher");
-    puts("//\thttps://github.com/verygenericname/Kernel64Patcher");
+    puts("//\thttps://github.com/palera1n/Kernel64Patcher");
+    puts("//\thttps://github.com/palera1n/KPlooshFinder");
     puts("//\thttps://github.com/verygenericname/kerneldiff_C");
     puts("//\thttps://github.com/synackuk/belladonna");
     puts("//\thttps://github.com/libimobiledevice/libirecovery");
