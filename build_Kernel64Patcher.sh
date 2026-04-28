@@ -33,6 +33,86 @@ cd KPlooshFinder
 git submodule update --init --recursive
 cd ..
 
+
+########################################
+# Replace Makefiles (controlled builds)
+########################################
+
+echo "== Replacing Makefiles =="
+
+# Kernel64Patcher Makefile
+cat > "$SRC/Kernel64Patcher/Makefile" <<'EOF'
+CC ?= clang
+CFLAGS ?= -O2
+LDFLAGS ?=
+
+VERSION := $(shell git rev-parse --short HEAD)-$(shell git rev-list --count HEAD)
+
+TARGET := Kernel64Patcher
+SRC := Kernel64Patcher.c
+
+.PHONY: all clean
+
+all: $(TARGET)
+
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) $(LDFLAGS) \
+		-DVERSION=\"$(VERSION)\" \
+		$(SRC) -o $(TARGET)
+
+clean:
+	rm -f $(TARGET)
+EOF
+
+# KPlooshFinder Makefile
+cat > "$SRC/KPlooshFinder/Makefile" <<'EOF'
+CC ?= clang
+
+CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
+LDFLAGS ?=
+
+SRC := $(wildcard src/*.c)
+PATCH_SRC := $(wildcard patches/*.c)
+
+OBJDIR := obj
+OBJS := $(SRC:src/%.c=$(OBJDIR)/%.o) \
+        $(PATCH_SRC:patches/%.c=$(OBJDIR)/patches/%.o)
+
+PLOOSHFINDER := plooshfinder/libplooshfinder.a
+
+INCLUDES := -I./include -I./plooshfinder/include
+LIBS := -L./plooshfinder -lplooshfinder
+
+TARGET := KPlooshFinder
+
+.PHONY: all clean submodules dirs
+
+all: submodules dirs $(PLOOSHFINDER) $(TARGET)
+
+submodules:
+	@git submodule update --init --recursive
+
+dirs:
+	@mkdir -p $(OBJDIR)/patches
+
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) \
+		$(OBJS) $(LIBS) -o $@
+
+$(OBJDIR)/%.o: src/%.c
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+$(OBJDIR)/patches/%.o: patches/%.c
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+
+$(PLOOSHFINDER):
+	$(MAKE) -C plooshfinder
+
+clean:
+	rm -rf $(OBJDIR) $(TARGET)
+	$(MAKE) -C plooshfinder clean
+EOF
+
 ########################################
 # Build function
 ########################################
