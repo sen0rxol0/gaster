@@ -374,10 +374,14 @@ build_img4() {
     log "Building img4lib / img4 tool"
     cd "${_SRC_ROOT}/img4lib"
 
+
     if [[ "${TARGET_PLATFORM}" == "macos" ]]; then
-        local CFLAGS="-isysroot $(xcrun --sdk macosx --show-sdk-path) -mmacosx-version-min=10.13 -fPIC"
-        "${MAKE_BIN}" -C lzfse CFLAGS="${CFLAGS}" -j"${NCPU}"
-        "${MAKE_BIN}" -j"${NCPU}" COMMONCRYPTO=1
+        local arch="$1"
+        local SDK="$(xcrun --sdk macosx --show-sdk-path)"
+        local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -O2 -fPIC"
+        local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13"
+        "${MAKE_BIN}" -C lzfse CC="${CC}" CFLAGS="${IMG4_CFLAGS}" -j"${NCPU}"
+        "${MAKE_BIN}" CC="${CC}" CFLAGS="${IMG4_CFLAGS}" LDFLAGS="${IMG4_LDFLAGS}" -j"${NCPU}" COMMONCRYPTO=1
     else
         "${MAKE_BIN}" -j"${NCPU}"
     fi
@@ -568,7 +572,7 @@ build_single() {
     fi
 
     build_static_libs "${platform}"
-    build_img4
+    build_img4 "${arch}"
     build_gastera1n
 
     local artifact_bin="${build_root}/artifacts/gastera1n"
