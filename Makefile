@@ -1,6 +1,9 @@
 SRC      = $(shell pwd)
 LIBS_DIR = $(SRC)/libs_root
 CC      ?= cc
+# Respect externally provided flags (from build.sh)
+override CFLAGS  := $(CFLAGS)
+override LDFLAGS := $(LDFLAGS)
 CFLAGS  += -I$(LIBS_DIR)/include
 
 # -Weverything is Clang-only; gate it so GCC builds don't break
