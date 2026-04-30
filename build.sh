@@ -374,14 +374,31 @@ build_img4() {
     log "Building img4lib / img4 tool"
     cd "${_SRC_ROOT}/img4lib"
 
-
     if [[ "${TARGET_PLATFORM}" == "macos" ]]; then
         local arch="$1"
-        local SDK="$(xcrun --sdk macosx --show-sdk-path)"
-        local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -O2 -fPIC"
-        local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13"
-        "${MAKE_BIN}" -C lzfse CC="${CC}" CFLAGS="${IMG4_CFLAGS}" -j"${NCPU}"
-        "${MAKE_BIN}" CC="${CC}" CFLAGS="${IMG4_CFLAGS}" LDFLAGS="${IMG4_LDFLAGS}" -j"${NCPU}" COMMONCRYPTO=1
+        local SDK
+        SDK="$(xcrun --sdk macosx --show-sdk-path)"
+        local MINOS="10.13"
+        local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=${MINOS} -O2 -fPIC"
+        local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=${MINOS}"
+
+        # Always rebuild lzfse from scratch for this arch so a prior
+        # arm64 .a is never reused by the x86_64 (or vice-versa) build.
+        "${MAKE_BIN}" -C lzfse clean 2>/dev/null || true
+        rm -rf lzfse/build   # belt-and-suspenders: nuke the cmake output dir
+
+        "${MAKE_BIN}" -C lzfse \
+            CC="${CC}" \
+            CFLAGS="${IMG4_CFLAGS}" \
+            -j"${NCPU}"
+
+        "${MAKE_BIN}" \
+            CC="${CC}" \
+            LD="${CC}" \
+            CFLAGS="${IMG4_CFLAGS}" \
+            LDFLAGS="${IMG4_LDFLAGS}" \
+            COMMONCRYPTO=1 \
+            -j"${NCPU}"
     else
         "${MAKE_BIN}" -j"${NCPU}"
     fi
