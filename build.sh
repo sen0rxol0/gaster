@@ -389,9 +389,9 @@ build_img4() {
         "${MAKE_BIN}" -C lzfse clean 2>/dev/null || true
         rm -rf lzfse/build   # belt-and-suspenders: nuke the cmake output dir
 
-        "${MAKE_BIN}" -C lzfse CFLAGS="${IMG4_CFLAGS}" -j"${NCPU}"
+        "${MAKE_BIN}" -C lzfse CFLAGS="${ARCH_CFLAGS}" -j"${NCPU}"
 
-        "${MAKE_BIN}" EXTRA_CFLAGS="${IMG4_CFLAGS}" COMMONCRYPTO=1 -j"${NCPU}"
+        "${MAKE_BIN}" EXTRA_CFLAGS="${ARCH_CFLAGS}" COMMONCRYPTO=1 -j"${NCPU}"
     else
         "${MAKE_BIN}" -j"${NCPU}"
     fi
