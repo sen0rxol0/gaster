@@ -626,6 +626,17 @@ merge_universal_release() {
 
         if is_macho "${file}" && is_macho "${other}"; then
             mkdir -p "$(dirname "${out}")"
+
+            # Get architectures
+            local archs
+            archs="$(lipo -info "${file}" 2>/dev/null)"
+
+            # If already universal (contains both), skip
+            if [[ "${archs}" == *"arm64"* && "${archs}" == *"x86_64"* ]]; then
+                log "  skip (already universal): ${rel}"
+                continue
+            fi
+
             log "  lipo: ${rel}"
             lipo -create "${file}" "${other}" -output "${out}"
         fi
