@@ -410,7 +410,10 @@ build_gastera1n() {
     cp -a "${_SYSROOT}${PREFIX}/include" "${ROOT_DIR}/libs_root/"
     cp -a "${_SYSROOT}${PREFIX}/lib"     "${ROOT_DIR}/libs_root/"
 
-    "${MAKE_BIN}" -j"${NCPU}"
+    #local arch="$1"
+    
+    #"${MAKE_BIN}" CC="${CC} -arch ${arch}" CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}" -j"${NCPU}"
+    "${MAKE_BIN}" CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS}" -j"${NCPU}"
 
     [[ -x "${ROOT_DIR}/gastera1n" ]] || die "gastera1n binary not produced by make"
 }
