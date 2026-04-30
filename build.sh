@@ -379,19 +379,20 @@ build_img4() {
         local arch="$1"
         local SDK
         SDK="$(xcrun --sdk macosx --show-sdk-path)"
-        local ARCH_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -O2 -fPIC"
-        # local ARCH_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13"
-
-        # sed -i '' 's/^CFLAGS[[:space:]]*=/CFLAGS = $(EXTRA_CFLAGS) /' Makefile
+        local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -O2 -fPIC"
+        local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -L${_SYSROOT}${PREFIX}/lib -Llzfse/build/bin"
+        # local ARCH_LDFLAGS="${LDFLAGS} -Llzfse/build/bin"
+        
+        sed -i '' 's/^CFLAGS[[:space:]]*=[[:space:]]*-Wall -W -pedantic/CFLAGS = $(EXTRA_CFLAGS) -Wall -W -pedantic/' Makefile
 
         # Always rebuild lzfse from scratch for this arch so a prior
         # arm64 .a is never reused by the x86_64 (or vice-versa) build.
         "${MAKE_BIN}" -C lzfse clean 2>/dev/null || true
         rm -rf lzfse/build   # belt-and-suspenders: nuke the cmake output dir
 
-        "${MAKE_BIN}" -C lzfse CFLAGS="${ARCH_CFLAGS}" -j"${NCPU}"
+        "${MAKE_BIN}" -C lzfse CFLAGS="${IMG4_CFLAGS}" -j"${NCPU}"
 
-        "${MAKE_BIN}" CC="clang -arch ${arch}" COMMONCRYPTO=1 -j"${NCPU}"
+        "${MAKE_BIN}" EXTRA_CFLAGS="${IMG4_CFLAGS}" LDFLAGS="${IMG4_LDFLAGS}" COMMONCRYPTO=1 -j"${NCPU}"
     else
         "${MAKE_BIN}" -j"${NCPU}"
     fi
