@@ -1403,31 +1403,24 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 {
     log_info("Building ramdisk...");
 
-    /*
-     * ssh64.tar.gz may be split across ssh64.tar.gz.* parts.
-     * Resolve both paths relative to g_tool_dir.
-     */
-    char ssh64_gz[PATH_MAX], ssh64_glob[PATH_MAX];
+    char ssh64_gz[PATH_MAX];
     snprintf(ssh64_gz,   sizeof(ssh64_gz),   "%s/ssh64.tar.gz",   g_tool_dir);
-    snprintf(ssh64_glob, sizeof(ssh64_glob), "%s/ssh64.tar.gz.*", g_tool_dir);
 
     if (access(ssh64_gz, F_OK) != 0)
-        if (shell_cmd("cat %s > '%s'", ssh64_glob, ssh64_gz) != 0)
+        if (shell_cmd("cat %s/ssh64.tar.gz_* > '%s'", g_tool_dir, ssh64_gz) != 0)
             return -1;
 
     char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
     snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec", ctx->ramdisk);
     snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
 
-    if (file_copy(rdsk_dec, rdsk_dmg) != 0) {
-        log_error("stage_build_ramdisk: failed to copy ramdisk image\n");
+    if (rename(rdsk_dec, rdsk_dmg) != 0) {
+        log_error("stage_build_ramdisk: failed to move ramdisk image\n");
         return -1;
     }
 
     if (shell_cmd("hdiutil resize -size 180MB '%s'", rdsk_dmg) != 0)
         return -1;
-
-    sleep(SLEEP_HDIUTIL_ATTACH);
 
     if (shell_cmd("hdiutil attach '%s' -mountpoint '%s'",
                   rdsk_dmg, ctx->mount) != 0)
