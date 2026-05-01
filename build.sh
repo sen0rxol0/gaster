@@ -17,6 +17,25 @@
 #     are expected in ROOT_DIR with the naming convention described in
 #     stage_release_tree().
 #
+# Bundle layout assumed by rpath entries:
+#
+#   MyApp.app/
+#     Contents/
+#       Frameworks/        ← libplist-2.0.dylib, libirecovery-1.0.dylib
+#       MacOS/
+#         bin/
+#           gastera1n/
+#             gastera1n    ← binary lives here
+#
+#   From gastera1n the relative path to Frameworks/ is therefore:
+#     @loader_path/../../../Frameworks      (3 levels up from the binary file)
+#
+#   A system-installed fallback is added after the bundle path so that the
+#   binary remains runnable outside the bundle (e.g. during development):
+#     @loader_path/../../../Frameworks      (primary  – bundle)
+#     /usr/local/lib                        (fallback – system Homebrew prefix)
+#     /usr/lib                              (fallback – system)
+#
 # Usage:
 #   ./build.sh [TARGET_PLATFORM] [TARGET_ARCH]
 #
@@ -93,6 +112,27 @@ LIBPLIST_VERSION="2.2.0"
 LIBIRECOVERY_VERSION="1.0.0"
 
 # ---------------------------------------------------------------------------
+# rpath constants
+#
+# gastera1n lives at:  Contents/MacOS/bin/gastera1n/gastera1n
+# Frameworks lives at: Contents/Frameworks/
+#
+# Relative traversal from the binary to Frameworks/:
+#   ../  → gastera1n/   (the containing dir)
+#   ../  → bin/
+#   ../  → MacOS/
+#   ../  → Contents/
+#   Frameworks
+#   = @loader_path/../../../Frameworks
+#
+# Two system fallback paths cover Homebrew (/usr/local/lib) and the OS
+# (/usr/lib) so the binary is usable outside the bundle during development.
+# ---------------------------------------------------------------------------
+RPATH_BUNDLE="@loader_path/../../../Frameworks"
+RPATH_SYSTEM_LOCAL="/usr/local/lib"
+RPATH_SYSTEM="/usr/lib"
+
+# ---------------------------------------------------------------------------
 # Source pinning
 # ---------------------------------------------------------------------------
 clone_sources() {
@@ -114,8 +154,8 @@ clone_sources() {
 
     # libplist – pinned to the 2.2.0 commit.
     # The static archive stays in the sysroot for link-time symbol resolution.
-    # At runtime the host application's Frameworks/ shared copy is used via
-    # the @rpath LC_RPATH entries embedded by fix_macos_rpath().
+    # At runtime dyld loads the host Frameworks/ shared copy via the
+    # @loader_path-relative LC_RPATH entry embedded by fix_macos_rpath().
     git clone --quiet https://github.com/libimobiledevice/libplist.git
     git -C libplist checkout --quiet "c5a30e9267068436a75b5d00fcbf95cb9c1f4dcd"
 
@@ -163,10 +203,22 @@ setup_macos_env() {
     export CFLAGS="${common_cflags} -isystem ${_SYSROOT}${PREFIX}/include"
     export CPPFLAGS="${common_cflags} -isystem ${_SYSROOT}${PREFIX}/include -Wno-error=implicit-function-declaration"
     export CXXFLAGS="${common_cflags} -stdlib=libc++ -isystem ${_SYSROOT}${PREFIX}/include"
+
+    # ---------------------------------------------------------------------------
+    # LDFLAGS – rpath chain (order matters: dyld searches in order)
+    #
+    #   1. @loader_path/../../../Frameworks   bundle-relative Frameworks/
+    #      (primary: where the app ships libplist + libirecovery)
+    #   2. /usr/local/lib                     Homebrew system install
+    #      (secondary: allows running the binary outside the bundle)
+    #   3. /usr/lib                           macOS system libraries
+    #      (tertiary: last-resort fallback)
+    # ---------------------------------------------------------------------------
     export LDFLAGS="-g -Wl,-dead_strip -arch ${arch} -mmacosx-version-min=${minos} -isysroot ${sdk} \
 -L${_SYSROOT}${PREFIX}/lib \
--Wl,-rpath,@executable_path/../Frameworks \
--Wl,-rpath,@loader_path/../Frameworks"
+-Wl,-rpath,${RPATH_BUNDLE} \
+-Wl,-rpath,${RPATH_SYSTEM_LOCAL} \
+-Wl,-rpath,${RPATH_SYSTEM}"
 
     local host_arch
     host_arch="$(uname -m)"
@@ -272,7 +324,8 @@ build_static_libs() {
     #   libirecovery and libfragmentzip (which depend on it).  The archive
     #   stays in the sysroot; gastera1n's Makefile links -lplist-2.0 against
     #   it at build time.  At runtime dyld loads the host Frameworks/ dylib
-    #   via the @rpath LC embedded by fix_macos_rpath().
+    #   via the @loader_path-relative LC_RPATH entry baked in by
+    #   fix_macos_rpath().
     #   DO NOT remove the .a — that breaks the link step.
     # -----------------------------------------------------------------------
     log "Building libplist ${LIBPLIST_VERSION} (static)"
@@ -304,8 +357,8 @@ _inject_host_pc_stubs() {
     mkdir -p "${pc_dir}"
 
     # On macOS the static archives in the sysroot are sufficient for the
-    # linker; @rpath handles runtime.  On Linux we additionally probe for
-    # any system shared library and emit a -L for it.
+    # linker; the rpath chain handles runtime resolution.  On Linux we
+    # additionally probe for any system shared library and emit a -L for it.
     local extra_libs_plist=""
     local extra_libs_irecovery=""
 
@@ -417,17 +470,29 @@ build_gastera1n() {
 }
 
 # ---------------------------------------------------------------------------
-# macOS rpath / strip fixup
+# macOS rpath / install-name fixup
 #
-# The gastera1n binary may have been linked against libplist/libirecovery
-# static archives whose install_name encodes an absolute sysroot path.
-# Rewrite any such paths to @rpath/<dylib> so dyld resolves them from the
-# host application's Frameworks/ bundle at runtime.
+# Steps performed on each Mach-O binary:
+#
+#   1. Rewrite any absolute sysroot-embedded install_names for libplist and
+#      libirecovery to @rpath/<dylib>.  This is necessary because the static
+#      builds may bake an absolute path into LC_LOAD_DYLIB.
+#
+#   2. Ensure the three LC_RPATH entries are present in the correct order:
+#        a. @loader_path/../../../Frameworks   (bundle – primary)
+#        b. /usr/local/lib                     (Homebrew – secondary)
+#        c. /usr/lib                           (system   – tertiary)
+#      The LDFLAGS already embed these at link time; the explicit
+#      install_name_tool calls here are a safety net for any that may have
+#      been dropped by libtool or the Makefile.
+#
+#   3. Strip dead symbols (best-effort).
 # ---------------------------------------------------------------------------
 fix_macos_rpath() {
     local bin="$1"
     log "Fixing rpath / stripping: $(basename "${bin}")"
 
+    # Step 1 – rewrite absolute install names → @rpath/<basename>
     local lib
     while IFS= read -r lib; do
         case "${lib}" in
@@ -439,6 +504,22 @@ fix_macos_rpath() {
         esac
     done < <(otool -L "${bin}" 2>/dev/null | awk 'NR>1{print $1}')
 
+    # Step 2 – ensure rpath entries are present in priority order.
+    #
+    # install_name_tool -add_rpath is idempotent when the entry already
+    # exists (it exits non-zero but we suppress the error).  We delete
+    # any stale entries first to guarantee ordering, then re-add them.
+    local rpath_entry
+    for rpath_entry in "${RPATH_BUNDLE}" "${RPATH_SYSTEM_LOCAL}" "${RPATH_SYSTEM}"; do
+        install_name_tool -delete_rpath "${rpath_entry}" "${bin}" 2>/dev/null || true
+    done
+    # Add in reverse order so that after the loop the binary's LC_RPATH
+    # list reads: BUNDLE → SYSTEM_LOCAL → SYSTEM  (dyld searches in order).
+    for rpath_entry in "${RPATH_SYSTEM}" "${RPATH_SYSTEM_LOCAL}" "${RPATH_BUNDLE}"; do
+        install_name_tool -add_rpath "${rpath_entry}" "${bin}" 2>/dev/null || true
+    done
+
+    # Step 3 – strip
     "${STRIP:-strip}" -u -r "${bin}" 2>/dev/null \
         || "${STRIP:-strip}" "${bin}" \
         || true
