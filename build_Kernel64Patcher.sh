@@ -176,6 +176,8 @@ cp "$OUT/Kernel64Patcher_wrapper" "$RELEASE/Kernel64Patcher"
 cp "$OUT/Kernel64Patcher"         "$RELEASE/Kernel64Patcher_legacy"
 cp "$OUT/KPlooshFinder"           "$RELEASE/KPlooshFinder"
 
+gzip -9 -c "$RELEASE/Kernel64Patcher" > "$ROOT/../Kernel64Patcher_macOS.gz"
+
 ########################################
 # Done
 ########################################
