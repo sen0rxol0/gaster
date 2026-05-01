@@ -1418,7 +1418,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    if (shell_cmd("hdiutil resize -size 180MB '%s'", rdsk_dmg) != 0)
+    if (shell_cmd("hdiutil resize -size 216MB '%s'", rdsk_dmg) != 0)
         return -1;
 
     sleep(SLEEP_HDIUTIL_ATTACH);
