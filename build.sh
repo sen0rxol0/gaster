@@ -17,24 +17,6 @@
 #     are expected in ROOT_DIR with the naming convention described in
 #     stage_release_tree().
 #
-# Bundle layout assumed by rpath entries:
-#
-#   MyApp.app/
-#     Contents/
-#       Frameworks/        ← libplist-2.0.dylib, libirecovery-1.0.dylib
-#       MacOS/
-#         bin/
-#           gastera1n/
-#             gastera1n    ← binary lives here
-#
-#   From gastera1n the relative path to Frameworks/ is therefore:
-#     @loader_path/../../../Frameworks      (3 levels up from the binary file)
-#
-#   A system-installed fallback is added after the bundle path so that the
-#   binary remains runnable outside the bundle (e.g. during development):
-#     @loader_path/../../../Frameworks      (primary  – bundle)
-#     /usr/local/lib                        (fallback – system Homebrew prefix)
-#     /usr/lib                              (fallback – system)
 #
 # Usage:
 #   ./build.sh [TARGET_PLATFORM] [TARGET_ARCH]
