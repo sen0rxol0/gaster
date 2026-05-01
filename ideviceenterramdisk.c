@@ -182,8 +182,8 @@ static int file_copy(const char *src, const char *dst)
     if (!feof(in)) ret = -1;
 
     struct stat st;
-    if (ret == 0 && fstat(fileno(in), &st) == 0)
-        fchmod(fileno(out), st.st_mode & 0777);
+    if (ret == 0 && stat(src, &st) == 0)
+        chmod(dst, st.st_mode & 0777);
 
     fclose(in);
     fclose(out);
