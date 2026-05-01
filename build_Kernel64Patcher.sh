@@ -76,12 +76,9 @@ CFLAGS ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
 CC := clang
 LIBS = -lplooshfinder
 
-.PHONY: all submodules dirs clean
+.PHONY: all dirs clean
 
-all: submodules dirs $(PLOOSHFINDER) KPlooshFinder
-
-submodules:
-	@git submodule update --init --remote --recursive
+all: dirs $(PLOOSHFINDER) KPlooshFinder
 
 dirs:
 	@mkdir -p $(OBJDIR)
