@@ -12,6 +12,16 @@
  * Kernel64Patcher) are expected in the same directory as img4,
  * decompressed on first use by ensure_tool().
  *
+ * Device cache
+ * ────────────
+ * All patched img4 payloads are saved into a per-device cache directory:
+ *
+ *   /tmp/gastera1n_cache/<ecid>_<cpid>/
+ *
+ * On subsequent runs with ramdiskBootMode the cache is checked first; if
+ * all required img4 files are present the prepare/download/decrypt/patch
+ * pipeline is skipped entirely and boot proceeds immediately.
+ *
  * Shell usage
  * ───────────
  * popen() is retained only for calls that are irreducibly shell-based
@@ -58,6 +68,7 @@
 
 #define STAGING_DIR      "/tmp/gastera1n_rdsk"
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
+#define CACHE_BASE_DIR   "/tmp/gastera1n_cache"
 
 /* Seconds to wait after hdiutil attach/detach so the kernel can settle. */
 #define SLEEP_HDIUTIL_ATTACH  3
@@ -76,6 +87,9 @@
 #define TOOL_TSSCHECKER      "tsschecker"
 #define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
 #define TOOL_KERNEL64PATCHER "Kernel64Patcher"
+
+/* Cache manifest file – presence signals a complete, valid cache entry. */
+#define CACHE_MANIFEST_NAME  ".complete"
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -483,6 +497,9 @@ typedef struct {
     char staging[PATH_MAX];
     char mount[PATH_MAX];
 
+    /* Per-device cache directory: CACHE_BASE_DIR/<ecid>_<cpid>/ */
+    char cache_dir[PATH_MAX];
+
     /* Raw (im4p) downloads */
     char kernelcache[PATH_MAX];
     char trustcache[PATH_MAX];
@@ -491,7 +508,7 @@ typedef struct {
     char ibec[PATH_MAX];
     char ibss[PATH_MAX];
 
-    /* Final img4 payloads */
+    /* Final img4 payloads (inside staging during build, then cached) */
     char kernelcache_img4[PATH_MAX];
     char trustcache_img4[PATH_MAX];
     char ramdisk_img4[PATH_MAX];
@@ -509,6 +526,9 @@ static void ctx_init(rdsk_ctx_t *ctx)
 
     snprintf(ctx->staging, sizeof(ctx->staging), STAGING_DIR);
     snprintf(ctx->mount,   sizeof(ctx->mount),   MOUNT_DIR);
+
+    /* cache_dir is populated after device identification in stage_prepare(). */
+    ctx->cache_dir[0] = '\0';
 
 #define STAGE(field, name) \
     snprintf(ctx->field, sizeof(ctx->field), "%s/" name, ctx->staging)
@@ -530,6 +550,149 @@ static void ctx_init(rdsk_ctx_t *ctx)
     STAGE(ibss_img4,        "ibss.img4");
 
 #undef STAGE
+}
+
+/*
+ * ctx_set_cache_dir – derive cache_dir from ecid/cpid and (re)point all
+ * img4 fields to the cache directory so that stage_build_img4() writes
+ * directly there and stage_boot_ramdisk() reads from the same paths.
+ *
+ * The im4m file is also stored in the cache so SHSH blobs survive across
+ * runs.
+ */
+static int ctx_set_cache_dir(rdsk_ctx_t *ctx,
+                              const char *ecid,
+                              const char *cpid)
+{
+    snprintf(ctx->cache_dir, sizeof(ctx->cache_dir),
+             "%s/%s_%s", CACHE_BASE_DIR, ecid, cpid);
+
+    if (mkdir_p(ctx->cache_dir, 0755) != 0) {
+        log_error("ctx_set_cache_dir: failed to create '%s': %s\n",
+                  ctx->cache_dir, strerror(errno));
+        return -1;
+    }
+
+#define CACHE(field, name) \
+    snprintf(ctx->field, sizeof(ctx->field), "%s/" name, ctx->cache_dir)
+
+    CACHE(kernelcache_img4, "kernelcache.img4");
+    CACHE(trustcache_img4,  "trustcache.img4");
+    CACHE(ramdisk_img4,     "rdsk.img4");
+    CACHE(devicetree_img4,  "dtree.img4");
+    CACHE(bootim_img4,      "bootlogo.img4");
+    CACHE(ibec_img4,        "ibec.img4");
+    CACHE(ibss_img4,        "ibss.img4");
+    CACHE(im4m,             "IM4M");
+
+#undef CACHE
+
+    log_info("Device cache directory: %s", ctx->cache_dir);
+    return 0;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Device cache helpers
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * Names of all img4 files that must be present for a cache hit.
+ * Must stay in sync with the CACHE() assignments in ctx_set_cache_dir().
+ */
+static const char *k_cached_img4_names[] = {
+    "kernelcache.img4",
+    "trustcache.img4",
+    "rdsk.img4",
+    "dtree.img4",
+    "bootlogo.img4",
+    "ibec.img4",
+    "ibss.img4",
+    NULL
+};
+
+/* Path of the manifest sentinel inside cache_dir. */
+static void cache_manifest_path(const rdsk_ctx_t *ctx, char *out)
+{
+    snprintf(out, PATH_MAX, "%s/%s", ctx->cache_dir, CACHE_MANIFEST_NAME);
+}
+
+/*
+ * cache_is_valid – return true if all required img4 files and the manifest
+ * are present in ctx->cache_dir.
+ */
+static bool cache_is_valid(const rdsk_ctx_t *ctx)
+{
+    if (ctx->cache_dir[0] == '\0') return false;
+
+    char manifest[PATH_MAX];
+    cache_manifest_path(ctx, manifest);
+    if (access(manifest, F_OK) != 0) return false;
+
+    for (int i = 0; k_cached_img4_names[i]; i++) {
+        char p[PATH_MAX];
+        snprintf(p, sizeof(p), "%s/%s", ctx->cache_dir, k_cached_img4_names[i]);
+        if (access(p, F_OK) != 0) {
+            log_debug("cache_is_valid: missing '%s'\n", p);
+            return false;
+        }
+    }
+    return true;
+}
+
+/*
+ * cache_mark_complete – write the manifest sentinel to signal a valid cache.
+ * Call only after all img4 files have been successfully written.
+ */
+static int cache_mark_complete(const rdsk_ctx_t *ctx)
+{
+    char manifest[PATH_MAX];
+    cache_manifest_path(ctx, manifest);
+    return file_write_line(manifest, "complete");
+}
+
+/*
+ * cache_invalidate – remove the manifest sentinel so the next run
+ * rebuilds.  Call before beginning a fresh patch pipeline for this device
+ * so a partial run doesn't leave a stale-but-complete-looking cache.
+ */
+static void cache_invalidate(const rdsk_ctx_t *ctx)
+{
+    if (ctx->cache_dir[0] == '\0') return;
+    char manifest[PATH_MAX];
+    cache_manifest_path(ctx, manifest);
+    unlink(manifest);
+}
+
+/*
+ * cache_load_for_boot – populate ctx->cache_dir from device info and
+ * verify that a valid cache exists.  Used by the ramdiskBootMode fast path.
+ *
+ * Returns  0 on a cache hit (boot can proceed immediately).
+ * Returns -1 on a cache miss or if device info cannot be retrieved.
+ */
+static int cache_load_for_boot(rdsk_ctx_t *ctx)
+{
+    char *ecid = dfu_get_info("ecid");
+    char *cpid = dfu_get_info("cpid");
+
+    if (!ecid || !cpid) {
+        log_error("cache_load_for_boot: failed to read device info\n");
+        free(ecid); free(cpid);
+        return -1;
+    }
+
+    int ret = ctx_set_cache_dir(ctx, ecid, cpid);
+    free(ecid); free(cpid);
+    if (ret != 0) return -1;
+
+    if (!cache_is_valid(ctx)) {
+        log_info("No valid cache found for this device — full build required.");
+        return -1;
+    }
+
+    log_info("Cache hit: using pre-built payloads from %s", ctx->cache_dir);
+    return 0;
 }
 
 
@@ -878,6 +1041,31 @@ static int stage_prepare(rdsk_ctx_t *ctx)
         log_error("stage_prepare: unsupported device\n");
         return -1;
     }
+
+    /*
+     * Derive and create the per-device cache directory now that we have
+     * enough device info.  The cache dir is established here (not in
+     * ctx_init) because it requires a device round-trip.
+     */
+    char *ecid = dfu_get_info("ecid");
+    char *cpid = dfu_get_info("cpid");
+
+    if (!ecid || !cpid) {
+        log_error("stage_prepare: could not get ecid/cpid for cache dir\n");
+        free(ecid); free(cpid);
+        return -1;
+    }
+
+    int cret = ctx_set_cache_dir(ctx, ecid, cpid);
+    free(ecid); free(cpid);
+    if (cret != 0) return -1;
+
+    /*
+     * Invalidate any existing cache before we start building so that a
+     * partial run (crash, power loss) doesn't leave stale payloads that
+     * look valid.
+     */
+    cache_invalidate(ctx);
 
     /* Clean up any leftover staging directory then re-create it. */
     if (rm_rf(ctx->staging) != 0 && errno != ENOENT) {
@@ -1321,6 +1509,10 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
     /*
      * Each img4 invocation is independent; run them sequentially via
      * exec_tool so that arguments are never subject to shell splitting.
+     *
+     * Output paths (ctx->*_img4) now point into ctx->cache_dir so the
+     * built payloads land directly in the cache — no separate copy step
+     * is required.
      */
     struct {
         const char *in;
@@ -1395,6 +1587,17 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
             return -1;
         }
     }
+
+    /*
+     * All img4 files written successfully.  Write the manifest sentinel so
+     * subsequent runs with ramdiskBootMode can use this cache directly.
+     */
+    if (cache_mark_complete(ctx) != 0) {
+        log_error("stage_build_img4: failed to write cache manifest\n");
+        return -1;
+    }
+
+    log_info("Payloads cached to %s", ctx->cache_dir);
     return 0;
 }
 
@@ -1469,8 +1672,23 @@ int ideviceenterramdisk_load(void)
     rdsk_ctx_t ctx;
     ctx_init(&ctx);
 
-    if (ramdiskBootMode)
-        return stage_boot_ramdisk(&ctx);
+    /*
+     * ramdiskBootMode fast path – check the per-device cache first.
+     *
+     * cache_load_for_boot() opens the device, reads ECID+CPID, constructs
+     * the cache directory path, and verifies that all required img4 files
+     * are present and marked complete.  If the cache is valid we go
+     * straight to booting without any download/decrypt/patch work.
+     *
+     * If the cache is missing or incomplete we fall through to the full
+     * pipeline below, which will rebuild and repopulate the cache.
+     */
+    if (ramdiskBootMode) {
+        if (cache_load_for_boot(&ctx) == 0)
+            return stage_boot_ramdisk(&ctx);
+
+        log_info("Cache miss — running full build pipeline...");
+    }
 
     if (stage_prepare(&ctx)         != 0) return -1;
     if (stage_download_images(&ctx) != 0) return -1;
