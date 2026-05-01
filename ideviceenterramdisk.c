@@ -1454,14 +1454,19 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf '%s'",
                   ctx->mount, ssh64_gz) != 0)
         RDSK_FAIL("stage_build_ramdisk: tar extract failed");
-
-    if (shell_cmd(
+      
+   if (shell_cmd(
             "cd '%s/sshd' && "
-            "chmod 0755 bin/* usr/bin/* usr/sbin/* usr/local/bin/* && "
+            "chmod 0755 bin/* usr/bin/* usr/sbin/* usr/local/bin/*",
+            ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: chmod failed");
+   
+   if (shell_cmd(
+            "cd '%s/sshd' && "
             "rsync --ignore-existing -auK . '%s/'",
             ctx->mount, ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: rsync failed");
-
+   
     if (shell_cmd(
             "cd '%s' && "
             "rm -rf ./sshd "
