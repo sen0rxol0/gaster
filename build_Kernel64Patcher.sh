@@ -26,7 +26,7 @@ export LDFLAGS="$ARCH_FLAGS $MIN_VER"
 ########################################
 cd "$SRC"
 
-if [ ! -f "$ROOT/Kernel64Patcher.h" ]; then
+if [ ! -d Kernel64Patcher ]; then
 	git clone https://github.com/palera1n/Kernel64Patcher.git
 
 	# Kernel64Patcher Makefile
@@ -54,7 +54,7 @@ clean:
 EOF
 fi
 
-if [ ! -f "$ROOT/KPlooshFinder.h" ]; then
+if [ ! -d KPlooshFinder ]; then
 	git clone --recursive https://github.com/palera1n/KPlooshFinder.git
 	cd KPlooshFinder
 	git submodule update --init --recursive
