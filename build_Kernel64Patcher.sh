@@ -66,51 +66,46 @@ EOF
 
 # KPlooshFinder Makefile
 cat > "$SRC/KPlooshFinder/Makefile" <<'EOF'
-CC ?= clang
+PLATFORM_SRC = $(wildcard patches/*)
+SRC = $(wildcard src/*)
+OBJDIR = obj
+PLATFORM_OBJS = $(patsubst patches/%,$(OBJDIR)/patches/%,$(PLATFORM_SRC:.c=.o))
+OBJS = $(patsubst src/%,$(OBJDIR)/%,$(SRC:.c=.o)) $(PLATFORM_OBJS)
+PLOOSHFINDER = plooshfinder/libplooshfinder.a
+INCLDIRS = -I./include -I./plooshfinder/include
 
-CFLAGS ?= -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
 LDFLAGS ?=
+LDFLAGS += -L./plooshfinder
+CFLAGS ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable
+CC := clang
+LIBS = -lplooshfinder
 
-SRC := $(wildcard src/*.c)
-PATCH_SRC := $(wildcard patches/*.c)
+.PHONY: all submodules dirs clean
 
-OBJDIR := obj
-OBJS := $(SRC:src/%.c=$(OBJDIR)/%.o) \
-        $(PATCH_SRC:patches/%.c=$(OBJDIR)/patches/%.o)
-
-PLOOSHFINDER := plooshfinder/libplooshfinder.a
-
-INCLUDES := -I./include -I./plooshfinder/include
-LIBS := -L./plooshfinder -lplooshfinder
-
-TARGET := KPlooshFinder
-
-.PHONY: all clean submodules dirs
-
-all: submodules dirs $(PLOOSHFINDER) $(TARGET)
+all: submodules dirs $(PLOOSHFINDER) KPlooshFinder
 
 submodules:
-	@git submodule update --init --recursive
+	@git submodule update --init --remote --recursive
 
 dirs:
+	@mkdir -p $(OBJDIR)
 	@mkdir -p $(OBJDIR)/patches
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) $(LDFLAGS) \
-		$(OBJS) $(LIBS) -o $@
+clean:
+	@rm -rf KPlooshFinder obj
+	@$(MAKE) -C plooshfinder clean
+
+KPlooshFinder: $(OBJS) $(PLOOSHFINDER)
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
 
 $(OBJDIR)/%.o: src/%.c
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(INCLDIRS) -c -o $@ $<
 
 $(OBJDIR)/patches/%.o: patches/%.c
-	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(INCLDIRS) -c -o $@ $<
 
 $(PLOOSHFINDER):
-	$(MAKE) -C plooshfinder
-
-clean:
-	rm -rf $(OBJDIR) $(TARGET)
-	$(MAKE) -C plooshfinder clean
+	$(MAKE) -C plooshfinder all
 EOF
 
 ########################################
