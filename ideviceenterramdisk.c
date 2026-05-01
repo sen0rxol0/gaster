@@ -1397,13 +1397,8 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 {
     log_info("Building ramdisk...");
 
-    /*
-     * ssh64.tar.gz may be split across ssh64.tar.gz.* parts.
-     * Resolve both paths relative to g_tool_dir.
-     */
-    char ssh64_gz[PATH_MAX];
+    char ssh64_gz[PATH_MAX], rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
     snprintf(ssh64_gz,   sizeof(ssh64_gz),   "%s/ssh64.tar.gz",   g_tool_dir);
-    char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
     snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec", ctx->ramdisk);
     snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
    
@@ -1411,9 +1406,8 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         if (shell_cmd("cat %s/ssh64.tar.gz_* > '%s'", g_tool_dir, ssh64_gz) != 0)
             return -1;
 
-
-    if (file_copy(rdsk_dec, rdsk_dmg) != 0) {
-        log_error("stage_build_ramdisk: failed to copy ramdisk image\n");
+    if (rename(rdsk_dec, rdsk_dmg) != 0) {
+        log_error("stage_build_ramdisk: failed to move ramdisk to staging\n");
         return -1;
     }
 
@@ -1428,70 +1422,26 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     sleep(SLEEP_HDIUTIL_ATTACH);
 
-    /* All failure paths below must detach before returning. */
-    int ret = 0;
-
-#define RDSK_FAIL(msg, ...) \
-    do { log_error(msg "\n", ##__VA_ARGS__); ret = -1; goto detach; } while (0)
-
-    /* Create required directories and write motd. */
-    {
-        char motd_path[PATH_MAX];
-        snprintf(motd_path, sizeof(motd_path), "%s/etc/motd", ctx->mount);
-        if (file_write_line(motd_path, "WELCOME BACK!") != 0)
-            RDSK_FAIL("stage_build_ramdisk: failed to write motd");
-
-        char pvr[PATH_MAX], pvrn[PATH_MAX], sshd[PATH_MAX];
-        snprintf(pvr,  sizeof(pvr),  "%s/private/var/root", ctx->mount);
-        snprintf(pvrn, sizeof(pvrn), "%s/private/var/run",  ctx->mount);
-        snprintf(sshd, sizeof(sshd), "%s/sshd",             ctx->mount);
-        if (mkdir_p(pvr,  0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir private/var/root failed");
-        if (mkdir_p(pvrn, 0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir private/var/run failed");
-        if (mkdir_p(sshd, 0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir sshd failed");
-    }
-
-    if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf '%s'",
-                  ctx->mount, ssh64_gz) != 0)
-        RDSK_FAIL("stage_build_ramdisk: tar extract failed");
-      
-   if (shell_cmd(
-            "cd '%s/sshd' && "
-            "chmod 0755 bin/* usr/bin/* usr/sbin/* usr/local/bin/*",
-            ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: chmod failed");
-   
-   if (shell_cmd(
-            "cd '%s/sshd' && "
-            "rsync --ignore-existing -auK . '%s/'",
-            ctx->mount, ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: rsync failed");
-   
-    if (shell_cmd(
-            "cd '%s' && "
-            "rm -rf ./sshd "
-                    "./usr/local/standalone/firmware/* "
-                    "./usr/share/progressui "
-                    "./usr/share/terminfo "
-                    "./etc/apt "
-                    "./etc/dpkg",
-            ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: cleanup failed");
-
-    if (patch_restored_external_in_ramdisk(ctx) != 0)
-        RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
-
-detach:
-    shell_cmd("hdiutil detach -force '%s'", ctx->mount);
-    sleep(SLEEP_HDIUTIL_DETACH);
+   // This reduces the overhead of multiple shell_cmd calls and handles the 'cd' once
+    int ret = shell_cmd(
+        "set -e; " // Exit immediately if any command fails
+        "printf 'WELCOME BACK!' > '%1$s/etc/motd'; "
+        "mkdir -p '%1$s/private/var/root' '%1$s/private/var/run' '%1$s/sshd'; "
+        "tar -C '%1$s/sshd' --preserve-permissions -xf '%2$s'; "
+        "chmod -R 0755 '%1$s/sshd/bin' '%1$s/sshd/usr'; "
+        "rsync -auK '%1$s/sshd/' '%1$s/'; "
+        "cd '%1$s' && rm -rf ./sshd ./usr/local/standalone/firmware/* ./usr/share/progressui ./etc/apt ./etc/dpkg",
+        ctx->mount, ssh64_gz
+    );
 
     if (ret != 0) return ret;
-
-    if (shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging) != 0)
-        return -1;
-
+       
+    ret = patch_restored_external_in_ramdisk(ctx);
+      
+    if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) != 0) return -1;
+    sleep(SLEEP_HDIUTIL_DETACH);
+    shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging);
     sleep(SLEEP_AFTER_RESIZE);
-
-#undef RDSK_FAIL
     return 0;
 }
 
