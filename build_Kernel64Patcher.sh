@@ -26,21 +26,10 @@ export LDFLAGS="$ARCH_FLAGS $MIN_VER"
 ########################################
 cd "$SRC"
 
-[ -d Kernel64Patcher ] || git clone https://github.com/palera1n/Kernel64Patcher.git
-[ -d KPlooshFinder ]   || git clone --recursive https://github.com/palera1n/KPlooshFinder.git
+if [ ! -d Kernel64Patcher ]; then
+	git clone https://github.com/palera1n/Kernel64Patcher.git
 
-cd KPlooshFinder
-git submodule update --init --recursive
-cd ..
-
-
-########################################
-# Replace Makefiles (controlled builds)
-########################################
-
-echo "== Replacing Makefiles =="
-
-# Kernel64Patcher Makefile
+	# Kernel64Patcher Makefile
 cat > "$SRC/Kernel64Patcher/Makefile" <<'EOF'
 CC ?= clang
 CFLAGS ?= -O2
@@ -63,9 +52,16 @@ $(TARGET): $(SRC)
 clean:
 	rm -f $(TARGET)
 EOF
+fi
 
-# KPlooshFinder Makefile
-cat > "$SRC/KPlooshFinder/Makefile" <<'EOF'
+if [ ! -d KPlooshFinder ]; then
+	git clone --recursive https://github.com/palera1n/KPlooshFinder.git
+	cd KPlooshFinder
+	git submodule update --init --recursive
+	cd ..
+
+	# KPlooshFinder Makefile
+	cat > "$SRC/KPlooshFinder/Makefile" <<'EOF'
 PLATFORM_SRC = $(wildcard patches/*)
 SRC = $(wildcard src/*)
 OBJDIR = obj
@@ -107,6 +103,7 @@ $(OBJDIR)/patches/%.o: patches/%.c
 $(PLOOSHFINDER):
 	$(MAKE) -C plooshfinder all
 EOF
+fi
 
 ########################################
 # Build function
