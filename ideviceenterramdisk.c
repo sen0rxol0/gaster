@@ -1084,10 +1084,7 @@ static int stage_patch_kernel(rdsk_ctx_t *ctx)
      * into a single string.  The wrapper's build_tool_argv() will drop
      * any flag not valid for the detected iOS version.
      */
-    if (exec_tool(k64_bin, kdec, kpwn,
-                  "-a", "-f", "-t", "-d",
-                  "-s", "-r", "-o", "-e", "-u",
-                  NULL) != 0) {
+    if (exec_tool(k64_bin, kdec, kpwn, "-a", NULL) != 0) {
         log_error("stage_patch_kernel: Kernel64Patcher failed\n");
         return -1;
     }
