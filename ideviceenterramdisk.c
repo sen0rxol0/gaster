@@ -12,6 +12,16 @@
  * Kernel64Patcher) are expected in the same directory as img4,
  * decompressed on first use by ensure_tool().
  *
+ * Device cache
+ * ────────────
+ * All patched img4 payloads are saved into a per-device cache directory:
+ *
+ *   /tmp/gastera1n_cache/<ecid>_<cpid>/
+ *
+ * On subsequent runs with ramdiskBootMode the cache is checked first; if
+ * all required img4 files are present the prepare/download/decrypt/patch
+ * pipeline is skipped entirely and boot proceeds immediately.
+ *
  * Shell usage
  * ───────────
  * popen() is retained only for calls that are irreducibly shell-based
@@ -58,13 +68,10 @@
 
 #define STAGING_DIR      "/tmp/gastera1n_rdsk"
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
-
-#define CACHE_BASE_DIR   ".gastera1n_cache"
-/* Cache manifest file – presence signals a complete, valid cache entry. */
-#define CACHE_MANIFEST_NAME  ".complete"
+#define CACHE_BASE_DIR   "/tmp/gastera1n_cache"
 
 /* Seconds to wait after hdiutil attach/detach so the kernel can settle. */
-#define SLEEP_HDIUTIL_ATTACH  5
+#define SLEEP_HDIUTIL_ATTACH  3
 #define SLEEP_HDIUTIL_DETACH  3
 #define SLEEP_AFTER_RESIZE    1
 /* Seconds between DFU send steps to let iBSS/iBEC negotiate. */
@@ -80,6 +87,9 @@
 #define TOOL_TSSCHECKER      "tsschecker"
 #define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
 #define TOOL_KERNEL64PATCHER "Kernel64Patcher"
+
+/* Cache manifest file – presence signals a complete, valid cache entry. */
+#define CACHE_MANIFEST_NAME  ".complete"
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -236,7 +246,37 @@ static int gunzip_file(const char *gz_path, const char *out_path)
     return ret;
 }
 
-/* Make path executable and strip the macOS quarantine xattr. */
+/*
+ * strip_quarantine – remove com.apple.quarantine from path.
+ *
+ * Called on every binary and data file placed outside the app bundle so
+ * Gatekeeper doesn't block execution.  ENOATTR (xattr absent) is silently
+ * ignored — it is the normal case for files that were never downloaded via
+ * a browser.  Non-Apple platforms compile this to a no-op.
+ *
+ * Returns 0 on success or if the xattr was already absent, -1 on error.
+ */
+static int strip_quarantine(const char *path)
+{
+#ifdef __APPLE__
+    if (removexattr(path, "com.apple.quarantine", 0) != 0 && errno != ENOATTR) {
+        log_error("strip_quarantine: removexattr '%s': %s\n",
+                  path, strerror(errno));
+        return -1;
+    }
+#else
+    (void)path;
+#endif
+    return 0;
+}
+
+/*
+ * make_executable – chmod +x and strip com.apple.quarantine.
+ *
+ * Used for every helper tool binary.  strip_quarantine() is called here
+ * so newly decompressed tools are immediately runnable without a Gatekeeper
+ * prompt on macOS.
+ */
 static int make_executable(const char *path)
 {
     struct stat st;
@@ -248,13 +288,7 @@ static int make_executable(const char *path)
         log_error("make_executable: chmod '%s': %s\n", path, strerror(errno));
         return -1;
     }
-#ifdef __APPLE__
-    /* ENOATTR means the quarantine xattr is simply absent — not an error. */
-    if (removexattr(path, "com.apple.quarantine", 0) != 0 && errno != ENOATTR)
-        log_error("make_executable: removexattr warning for '%s': %s\n",
-                  path, strerror(errno));
-#endif
-    return 0;
+    return strip_quarantine(path);
 }
 
 /* Write a single text line to path (mirrors `echo 'line' > path`). */
@@ -804,6 +838,20 @@ int dfu_wait_for_device(void)
 /*
  * dfu_get_info – return a heap-allocated string for the given key.
  * Caller must free().  Returns NULL on error.
+ *
+ * Recognised keys:  "ecid"  "cpid"  "product_type"  "model"
+ *
+ * Logging policy
+ * ──────────────
+ * An unrecognised key is always a programming error → log_error.
+ *
+ * A recognised key whose underlying libirecovery field is NULL means the
+ * device didn't expose that field in the current mode (e.g. some devices
+ * don't populate hardware_model in plain DFU).  This is not necessarily
+ * fatal — the caller decides and logs at the appropriate level.  We emit
+ * only a log_debug here so that callers which handle the NULL return
+ * gracefully (e.g. stage_get_shsh early-returning when shsh2 already
+ * exists) don't produce spurious error lines in the log.
  */
 char *dfu_get_info(const char *key)
 {
@@ -819,23 +867,41 @@ char *dfu_get_info(const char *key)
     irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
 
-    char *info = NULL;
+    char   *info      = NULL;
+    bool    key_known = false;
 
-    if (!strcmp(key, "ecid") && devinfo)
-        info = dup_printf("0x%016llX", (unsigned long long)devinfo->ecid);
-    else if (!strcmp(key, "cpid") && devinfo)
-        info = dup_printf("0x%04X", devinfo->cpid);
-    else if (!strcmp(key, "product_type") && device && device->product_type)
-        info = strdup(device->product_type);
-    else if (!strcmp(key, "model") && device && device->hardware_model)
-        info = strdup(device->hardware_model);
+    if (!strcmp(key, "ecid")) {
+        key_known = true;
+        if (devinfo)
+            info = dup_printf("0x%016llX", (unsigned long long)devinfo->ecid);
+    } else if (!strcmp(key, "cpid")) {
+        key_known = true;
+        if (devinfo)
+            info = dup_printf("0x%04X", devinfo->cpid);
+    } else if (!strcmp(key, "product_type")) {
+        key_known = true;
+        if (device && device->product_type)
+            info = strdup(device->product_type);
+    } else if (!strcmp(key, "model")) {
+        key_known = true;
+        if (device && device->hardware_model)
+            info = strdup(device->hardware_model);
+    }
 
     irecv_close(client);
 
-    if (info)
+    if (!key_known) {
+        log_error("dfu_get_info: unknown key '%s'\n", key);
+    } else if (info) {
         log_debug("  %s = %s\n", key, info);
-    else
-        log_error("dfu_get_info: failed to retrieve '%s'\n", key);
+    } else {
+        /*
+         * Field absent in the current device mode.  Debug-only: callers
+         * that need the value will log an error themselves with full context;
+         * callers that don't need it must not see spurious error lines.
+         */
+        log_debug("dfu_get_info: '%s' not available in current device mode\n", key);
+    }
 
     return info;
 }
@@ -954,6 +1020,10 @@ static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
  * gastera1n.  The .gz fallback handles the legacy case where archives were
  * not pre-decompressed at staging time.  Both paths are resolved relative
  * to g_tool_dir.
+ *
+ * make_executable() strips com.apple.quarantine in addition to chmod +x so
+ * the tool runs without a Gatekeeper prompt on macOS immediately after
+ * decompression.
  */
 static int ensure_tool(const char *name)
 {
@@ -973,7 +1043,7 @@ static int ensure_tool(const char *name)
         log_error("ensure_tool: failed to make '%s' executable\n", bin);
         return -1;
     }
-   
+
     return 0;
 }
 
@@ -1000,6 +1070,21 @@ static int stage_ensure_tools(void)
             return -1;
         }
     }
+
+    /*
+     * Strip quarantine from the gastera1n binary itself.
+     *
+     * The binary is shipped inside the app bundle or copied to g_tool_dir
+     * and may carry com.apple.quarantine set by macOS when the archive was
+     * first downloaded.  Unlike the helper tools above, gastera1n is not
+     * passed through make_executable() during startup, so we handle it here
+     * explicitly.  This is idempotent and non-fatal if the xattr is absent.
+     */
+    char self_bin[PATH_MAX];
+    snprintf(self_bin, sizeof(self_bin), "%s/gastera1n", g_tool_dir);
+    if (access(self_bin, F_OK) == 0)
+        strip_quarantine(self_bin);   /* best-effort */
+
     return 0;
 }
 
@@ -1179,7 +1264,16 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
     char *model = dfu_get_info("model");
 
     if (!ecid || !ptype || !model) {
-        log_error("stage_get_shsh: failed to read device info\n");
+        /*
+         * Report precisely which fields were unavailable.  dfu_get_info()
+         * logs only at debug level for missing fields; we escalate to error
+         * here because tsschecker cannot run without all three.
+         */
+        log_error("stage_get_shsh: could not retrieve required device info "
+                  "(ecid=%s product_type=%s model=%s)\n",
+                  ecid   ? ecid   : "NULL",
+                  ptype  ? ptype  : "NULL",
+                  model  ? model  : "NULL");
         free(ecid); free(ptype); free(model);
         return -1;
     }
@@ -1387,21 +1481,28 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 {
     log_info("Building ramdisk...");
 
-    char ssh64_gz[PATH_MAX], rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
+    /*
+     * ssh64.tar.gz may be split across ssh64.tar.gz.* parts.
+     * Resolve both paths relative to g_tool_dir.
+     */
+    char ssh64_gz[PATH_MAX], ssh64_glob[PATH_MAX];
     snprintf(ssh64_gz,   sizeof(ssh64_gz),   "%s/ssh64.tar.gz",   g_tool_dir);
-    snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec", ctx->ramdisk);
-    snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
-   
+    snprintf(ssh64_glob, sizeof(ssh64_glob), "%s/ssh64.tar.gz.*", g_tool_dir);
+
     if (access(ssh64_gz, F_OK) != 0)
-        if (shell_cmd("cat %s/ssh64.tar.gz_* > '%s'", g_tool_dir, ssh64_gz) != 0)
+        if (shell_cmd("cat %s > '%s'", ssh64_glob, ssh64_gz) != 0)
             return -1;
 
-    if (rename(rdsk_dec, rdsk_dmg) != 0) {
-        log_error("stage_build_ramdisk: failed to move ramdisk to staging\n");
+    char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
+    snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec", ctx->ramdisk);
+    snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
+
+    if (file_copy(rdsk_dec, rdsk_dmg) != 0) {
+        log_error("stage_build_ramdisk: failed to copy ramdisk image\n");
         return -1;
     }
 
-    if (shell_cmd("hdiutil resize -size 216MB '%s'", rdsk_dmg) != 0)
+    if (shell_cmd("hdiutil resize -size 180MB '%s'", rdsk_dmg) != 0)
         return -1;
 
     sleep(SLEEP_HDIUTIL_ATTACH);
@@ -1412,26 +1513,65 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     sleep(SLEEP_HDIUTIL_ATTACH);
 
-   // This reduces the overhead of multiple shell_cmd calls and handles the 'cd' once
-    int ret = shell_cmd(
-        "set -e; " // Exit immediately if any command fails
-        "printf 'WELCOME BACK!' > '%1$s/etc/motd'; "
-        "mkdir -p '%1$s/private/var/root' '%1$s/private/var/run' '%1$s/sshd'; "
-        "tar -C '%1$s/sshd' --preserve-permissions -xf '%2$s'; "
-        "chmod -R 0755 '%1$s/sshd/bin' '%1$s/sshd/usr'; "
-        "rsync -auK '%1$s/sshd/' '%1$s/'; "
-        "cd '%1$s' && rm -rf ./sshd ./usr/local/standalone/firmware/* ./usr/share/progressui ./etc/apt ./etc/dpkg",
-        ctx->mount, ssh64_gz
-    );
+    /* All failure paths below must detach before returning. */
+    int ret = 0;
+
+#define RDSK_FAIL(msg, ...) \
+    do { log_error(msg "\n", ##__VA_ARGS__); ret = -1; goto detach; } while (0)
+
+    /* Create required directories and write motd. */
+    {
+        char motd_path[PATH_MAX];
+        snprintf(motd_path, sizeof(motd_path), "%s/etc/motd", ctx->mount);
+        if (file_write_line(motd_path, "WELCOME BACK!") != 0)
+            RDSK_FAIL("stage_build_ramdisk: failed to write motd");
+
+        char pvr[PATH_MAX], pvrn[PATH_MAX], sshd[PATH_MAX];
+        snprintf(pvr,  sizeof(pvr),  "%s/private/var/root", ctx->mount);
+        snprintf(pvrn, sizeof(pvrn), "%s/private/var/run",  ctx->mount);
+        snprintf(sshd, sizeof(sshd), "%s/sshd",             ctx->mount);
+        if (mkdir_p(pvr,  0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir private/var/root failed");
+        if (mkdir_p(pvrn, 0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir private/var/run failed");
+        if (mkdir_p(sshd, 0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir sshd failed");
+    }
+
+    if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf '%s'",
+                  ctx->mount, ssh64_gz) != 0)
+        RDSK_FAIL("stage_build_ramdisk: tar extract failed");
+
+    if (shell_cmd(
+            "cd '%s/sshd' && "
+            "chmod 0755 bin/* usr/bin/* usr/sbin/* usr/local/bin/* && "
+            "rsync --ignore-existing -auK . '%s/'",
+            ctx->mount, ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: rsync failed");
+
+    if (shell_cmd(
+            "cd '%s' && "
+            "rm -rf ./sshd "
+                    "./usr/local/standalone/firmware/* "
+                    "./usr/share/progressui "
+                    "./usr/share/terminfo "
+                    "./etc/apt "
+                    "./etc/dpkg",
+            ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: cleanup failed");
+
+    if (patch_restored_external_in_ramdisk(ctx) != 0)
+        RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
+
+detach:
+    shell_cmd("hdiutil detach -force '%s'", ctx->mount);
+    sleep(SLEEP_HDIUTIL_DETACH);
 
     if (ret != 0) return ret;
-       
-    ret = patch_restored_external_in_ramdisk(ctx);
-      
-    if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) != 0) return -1;
-    sleep(SLEEP_HDIUTIL_DETACH);
-    shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging);
+
+    if (shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging) != 0)
+        return -1;
+
     sleep(SLEEP_AFTER_RESIZE);
+
+#undef RDSK_FAIL
     return 0;
 }
 
