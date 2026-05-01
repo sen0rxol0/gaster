@@ -1434,43 +1434,18 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 #define RDSK_FAIL(msg, ...) \
     do { log_error(msg "\n", ##__VA_ARGS__); ret = -1; goto detach; } while (0)
 
-    /* Create required directories and write motd. */
-    {
-        char motd_path[PATH_MAX];
-        snprintf(motd_path, sizeof(motd_path), "%s/etc/motd", ctx->mount);
-        if (file_write_line(motd_path, "WELCOME BACK!") != 0)
-            RDSK_FAIL("stage_build_ramdisk: failed to write motd");
-
-        char pvr[PATH_MAX], pvrn[PATH_MAX], sshd[PATH_MAX];
-        snprintf(pvr,  sizeof(pvr),  "%s/private/var/root", ctx->mount);
-        snprintf(pvrn, sizeof(pvrn), "%s/private/var/run",  ctx->mount);
-        snprintf(sshd, sizeof(sshd), "%s/sshd",             ctx->mount);
-        if (mkdir_p(pvr,  0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir private/var/root failed");
-        if (mkdir_p(pvrn, 0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir private/var/run failed");
-        if (mkdir_p(sshd, 0755) != 0) RDSK_FAIL("stage_build_ramdisk: mkdir sshd failed");
-    }
-
-    if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf '%s'",
-                  ctx->mount, ssh64_gz) != 0)
-        RDSK_FAIL("stage_build_ramdisk: tar extract failed");
-
+ // This reduces the overhead of multiple shell_cmd calls and handles the 'cd' once
     if (shell_cmd(
-            "cd '%s/sshd' && "
-            "chmod 0755 bin/* usr/bin/* usr/sbin/* usr/local/bin/* && "
-            "rsync --ignore-existing -auK . '%s/'",
-            ctx->mount, ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: rsync failed");
-
-    if (shell_cmd(
-            "cd '%s' && "
-            "rm -rf ./sshd "
-                    "./usr/local/standalone/firmware/* "
-                    "./usr/share/progressui "
-                    "./usr/share/terminfo "
-                    "./etc/apt "
-                    "./etc/dpkg",
-            ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: cleanup failed");
+        "set -e; " // Exit immediately if any command fails
+        "printf 'WELCOME BACK!' > '%1$s/etc/motd'; "
+        "mkdir -p '%1$s/private/var/root' '%1$s/private/var/run' '%1$s/sshd'; "
+        "tar -C '%1$s/sshd' --preserve-permissions -xf '%2$s'; "
+        "chmod -R 0755 '%1$s/sshd/bin' '%1$s/sshd/usr'; "
+        "rsync -auK '%1$s/sshd/' '%1$s/'; "
+        "cd '%1$s' && rm -rf ./sshd ./usr/local/standalone/firmware/* ./usr/share/progressui ./etc/apt ./etc/dpkg",
+        ctx->mount, ssh64_gz
+    ) != 0 )
+        RDSK_FAIL("stage_build_ramdisk: inject SSHd into ramdisk failed");
 
     if (patch_restored_external_in_ramdisk(ctx) != 0)
         RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
