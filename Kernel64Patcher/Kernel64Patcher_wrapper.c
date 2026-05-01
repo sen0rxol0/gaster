@@ -69,55 +69,63 @@ static int write_temp_exec(const char *name,
  *
  * Returns the iOS major version on success, or -1 on failure.
  */
-#define SCAN_SIZE 0x10000  /* 64 KiB — enough to reach the version string */
+#define SCAN_CHUNK  (1024 * 1024)   /* 1 MiB per read               */
+#define SCAN_MAX    (64 * 1024 * 1024) /* give up after 64 MiB       */
 
 static int get_ios_major(const char *kernel_path)
 {
     FILE *f = fopen(kernel_path, "rb");
-    if (!f) {
-        perror("open kernelcache");
-        return -1;
-    }
-
-    char *buf = malloc(SCAN_SIZE);
-    if (!buf) {
-        fclose(f);
-        fprintf(stderr, "Out of memory\n");
-        return -1;
-    }
-
-    size_t n = fread(buf, 1, SCAN_SIZE, f);
-    fclose(f);
-
-    if (n == 0) {
-        fprintf(stderr, "Failed to read kernelcache\n");
-        free(buf);
-        return -1;
-    }
+    if (!f) { perror("open kernelcache"); return -1; }
 
     const char *needle = "Darwin Kernel Version ";
-    size_t nlen = strlen(needle);
+    const size_t nlen  = strlen(needle);
 
-    /* memmem is available on both macOS and Linux */
-    char *p = memmem(buf, n, needle, nlen);
-    if (!p) {
-        fprintf(stderr, "Darwin version string not found in kernelcache\n");
-        free(buf);
-        return -1;
+    /*
+     * We read in overlapping chunks so the needle is never split across
+     * a chunk boundary.  Each new chunk starts (nlen - 1) bytes before
+     * the end of the previous chunk.
+     */
+    char *buf = malloc(SCAN_CHUNK + nlen);
+    if (!buf) { fclose(f); fprintf(stderr, "OOM\n"); return -1; }
+
+    size_t total   = 0;
+    size_t overlap = 0;          /* bytes carried over from last chunk */
+    int    ios     = -1;
+
+    while (total < SCAN_MAX) {
+        size_t want = SCAN_CHUNK;
+        size_t got  = fread(buf + overlap, 1, want, f);
+
+        if (got == 0) break;     /* EOF or error */
+
+        size_t window = overlap + got;
+        char *p = memmem(buf, window, needle, nlen);
+        if (p) {
+            int darwin_major = atoi(p + nlen);
+            if (darwin_major >= 14) {
+                ios = darwin_major - 6;
+                printf("Detected kernelcache: Darwin %d → iOS %d\n",
+                       darwin_major, ios);
+            } else {
+                fprintf(stderr, "Unexpected Darwin major: %d\n", darwin_major);
+            }
+            break;
+        }
+
+        /* Carry the tail forward so we don't miss a split needle */
+        overlap = (window >= nlen - 1) ? nlen - 1 : window;
+        memmove(buf, buf + window - overlap, overlap);
+        total += got;
     }
 
-    int darwin_major = atoi(p + nlen);
     free(buf);
+    fclose(f);
 
-    if (darwin_major < 14) {           /* sanity: nothing older than iOS 8 */
-        fprintf(stderr, "Unexpected Darwin major version: %d\n", darwin_major);
-        return -1;
-    }
-
-    /* Darwin major - 6 = iOS major (holds from Darwin 18 / iOS 12 onward) */
-    int ios_major = darwin_major - 6;
-    printf("Detected kernelcache: Darwin %d → iOS %d\n", darwin_major, ios_major);
-    return ios_major;
+    if (ios < 0)
+        fprintf(stderr,
+                "Darwin version string not found in kernelcache "
+                "(is it still IMG4/lzfse compressed?)\n");
+    return ios;
 }
 
 /*
