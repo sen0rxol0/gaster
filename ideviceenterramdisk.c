@@ -1422,8 +1422,10 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
                   rdsk_dmg, ctx->mount) != 0)
         return -1;
 
-    for (int i = 0; i < 5 * 10; i++) {
-        DIR *d = opendir(ctx->mount);
+    char mount_usr[PATH_MAX];
+    for (int i = 0; i < 5; i++) {
+        snprintf(mount_usr, sizeof(mount_usr), "%s/usr", ctx->mount);
+        DIR *d = opendir(mount_usr);
         if (d) {
             struct dirent *ent = readdir(d);
             if (ent) { closedir(d); break; }
@@ -1456,7 +1458,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
 detach:
     
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 3; i++) {
         if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0)
             break;
         sleep(1);
