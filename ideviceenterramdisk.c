@@ -808,8 +808,6 @@ static int ensure_tool(const char *name)
     tool_path(name, bin);
     snprintf(gz, sizeof(gz), "%s.gz", bin);
 
-    if (access(bin, X_OK) == 0) return 0;   /* already ready */
-
     if (access(gz, F_OK) == 0) {
         log_info("Decompressing %s.gz", name);
         if (gunzip_file(gz, bin) != 0) {
@@ -822,11 +820,7 @@ static int ensure_tool(const char *name)
         log_error("ensure_tool: failed to make '%s' executable\n", bin);
         return -1;
     }
-
-    if (access(bin, X_OK) != 0) {
-        log_error("ensure_tool: '%s' still not executable\n", bin);
-        return -1;
-    }
+   
     return 0;
 }
 
