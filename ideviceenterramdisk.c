@@ -666,45 +666,23 @@ char *dfu_get_info(const char *key)
     irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
 
-    if (!devinfo && !device) {
-        int mode = 0;
-        irecv_get_mode(client, &mode);
-        log_error("dfu_get_info: no device info available (mode=0x%04X) — "
-                  "is the device in DFU mode?\n", mode);
-        irecv_close(client);
-        return NULL;
-    }
-
     char *info = NULL;
 
-    if (!strcmp(key, "ecid")) {
-        if (devinfo)
-            info = dup_printf("0x%016llX", (unsigned long long)devinfo->ecid);
-        else
-            log_error("dfu_get_info: devinfo unavailable for key 'ecid'\n");
-    } else if (!strcmp(key, "cpid")) {
-        if (devinfo)
-            info = dup_printf("0x%04X", devinfo->cpid);
-        else
-            log_error("dfu_get_info: devinfo unavailable for key 'cpid'\n");
-    } else if (!strcmp(key, "product_type")) {
-        if (device && device->product_type)
-            info = strdup(device->product_type);
-        else
-            log_error("dfu_get_info: device record unavailable for key 'product_type'\n");
-    } else if (!strcmp(key, "model")) {
-        if (device && device->hardware_model)
-            info = strdup(device->hardware_model);
-        else
-            log_error("dfu_get_info: device record unavailable for key 'model'\n");
-    } else {
-        log_error("dfu_get_info: unknown key '%s'\n", key);
-    }
+    if (!strcmp(key, "ecid") && devinfo)
+        info = dup_printf("0x%016llX", (unsigned long long)devinfo->ecid);
+    else if (!strcmp(key, "cpid") && devinfo)
+        info = dup_printf("0x%04X", devinfo->cpid);
+    else if (!strcmp(key, "product_type") && device && device->product_type)
+        info = strdup(device->product_type);
+    else if (!strcmp(key, "model") && device && device->hardware_model)
+        info = strdup(device->hardware_model);
 
     irecv_close(client);
 
     if (info)
         log_debug("  %s = %s\n", key, info);
+    else
+        log_error("dfu_get_info: failed to retrieve '%s'\n", key);
 
     return info;
 }
