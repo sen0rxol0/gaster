@@ -12,16 +12,6 @@
  * Kernel64Patcher) are expected in the same directory as img4,
  * decompressed on first use by ensure_tool().
  *
- * Device cache
- * ────────────
- * All patched img4 payloads are saved into a per-device cache directory:
- *
- *   /tmp/gastera1n_cache/<ecid>_<cpid>/
- *
- * On subsequent runs with ramdiskBootMode the cache is checked first; if
- * all required img4 files are present the prepare/download/decrypt/patch
- * pipeline is skipped entirely and boot proceeds immediately.
- *
  * Shell usage
  * ───────────
  * popen() is retained only for calls that are irreducibly shell-based
@@ -53,8 +43,6 @@
 #include "ideviceenterramdisk.h"
 #include "ideviceloaders.h"
 #include "gastera1n.h"
-/* kernel64patcher.h removed: kernel patching is now done via the
-   Kernel64Patcher wrapper binary (exec_tool), not the embedded library. */
 #include "kerneldiff.h"
 
 #include <plist/plist.h>
@@ -68,10 +56,10 @@
 
 #define STAGING_DIR      "/tmp/gastera1n_rdsk"
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
-#define CACHE_BASE_DIR   "/tmp/gastera1n_cache"
+#define CACHE_BASE_DIR   ".gastera1n_cache"
 
 /* Seconds to wait after hdiutil attach/detach so the kernel can settle. */
-#define SLEEP_HDIUTIL_ATTACH  3
+#define SLEEP_HDIUTIL_ATTACH  5
 #define SLEEP_HDIUTIL_DETACH  3
 #define SLEEP_AFTER_RESIZE    1
 /* Seconds between DFU send steps to let iBSS/iBEC negotiate. */
@@ -247,35 +235,7 @@ static int gunzip_file(const char *gz_path, const char *out_path)
 }
 
 /*
- * strip_quarantine – remove com.apple.quarantine from path.
- *
- * Called on every binary and data file placed outside the app bundle so
- * Gatekeeper doesn't block execution.  ENOATTR (xattr absent) is silently
- * ignored — it is the normal case for files that were never downloaded via
- * a browser.  Non-Apple platforms compile this to a no-op.
- *
- * Returns 0 on success or if the xattr was already absent, -1 on error.
- */
-static int strip_quarantine(const char *path)
-{
-#ifdef __APPLE__
-    if (removexattr(path, "com.apple.quarantine", 0) != 0 && errno != ENOATTR) {
-        log_error("strip_quarantine: removexattr '%s': %s\n",
-                  path, strerror(errno));
-        return -1;
-    }
-#else
-    (void)path;
-#endif
-    return 0;
-}
-
-/*
  * make_executable – chmod +x and strip com.apple.quarantine.
- *
- * Used for every helper tool binary.  strip_quarantine() is called here
- * so newly decompressed tools are immediately runnable without a Gatekeeper
- * prompt on macOS.
  */
 static int make_executable(const char *path)
 {
@@ -288,7 +248,15 @@ static int make_executable(const char *path)
         log_error("make_executable: chmod '%s': %s\n", path, strerror(errno));
         return -1;
     }
-    return strip_quarantine(path);
+   
+#ifdef __APPLE__
+    if (removexattr(path, "com.apple.quarantine", 0) != 0 && errno != ENOATTR) {
+        log_error("strip_quarantine: removexattr '%s': %s\n",
+                  path, strerror(errno));
+        return -1;
+    }
+#endif
+    return 0;
 }
 
 /* Write a single text line to path (mirrors `echo 'line' > path`). */
@@ -840,18 +808,6 @@ int dfu_wait_for_device(void)
  * Caller must free().  Returns NULL on error.
  *
  * Recognised keys:  "ecid"  "cpid"  "product_type"  "model"
- *
- * Logging policy
- * ──────────────
- * An unrecognised key is always a programming error → log_error.
- *
- * A recognised key whose underlying libirecovery field is NULL means the
- * device didn't expose that field in the current mode (e.g. some devices
- * don't populate hardware_model in plain DFU).  This is not necessarily
- * fatal — the caller decides and logs at the appropriate level.  We emit
- * only a log_debug here so that callers which handle the NULL return
- * gracefully (e.g. stage_get_shsh early-returning when shsh2 already
- * exists) don't produce spurious error lines in the log.
  */
 char *dfu_get_info(const char *key)
 {
@@ -868,40 +824,20 @@ char *dfu_get_info(const char *key)
     irecv_devices_get_device_by_client(client, &device);
 
     char   *info      = NULL;
-    bool    key_known = false;
 
     if (!strcmp(key, "ecid")) {
-        key_known = true;
-        if (devinfo)
-            info = dup_printf("0x%016llX", (unsigned long long)devinfo->ecid);
+         info = dup_printf("0x%016llX", (unsigned long long)devinfo->ecid);
     } else if (!strcmp(key, "cpid")) {
-        key_known = true;
-        if (devinfo)
-            info = dup_printf("0x%04X", devinfo->cpid);
+         info = dup_printf("0x%04X", devinfo->cpid);
     } else if (!strcmp(key, "product_type")) {
-        key_known = true;
         if (device && device->product_type)
             info = strdup(device->product_type);
     } else if (!strcmp(key, "model")) {
-        key_known = true;
         if (device && device->hardware_model)
             info = strdup(device->hardware_model);
     }
 
     irecv_close(client);
-
-    if (!key_known) {
-        log_error("dfu_get_info: unknown key '%s'\n", key);
-    } else if (info) {
-        log_debug("  %s = %s\n", key, info);
-    } else {
-        /*
-         * Field absent in the current device mode.  Debug-only: callers
-         * that need the value will log an error themselves with full context;
-         * callers that don't need it must not see spurious error lines.
-         */
-        log_debug("dfu_get_info: '%s' not available in current device mode\n", key);
-    }
 
     return info;
 }
@@ -1070,20 +1006,6 @@ static int stage_ensure_tools(void)
             return -1;
         }
     }
-
-    /*
-     * Strip quarantine from the gastera1n binary itself.
-     *
-     * The binary is shipped inside the app bundle or copied to g_tool_dir
-     * and may carry com.apple.quarantine set by macOS when the archive was
-     * first downloaded.  Unlike the helper tools above, gastera1n is not
-     * passed through make_executable() during startup, so we handle it here
-     * explicitly.  This is idempotent and non-fatal if the xattr is absent.
-     */
-    char self_bin[PATH_MAX];
-    snprintf(self_bin, sizeof(self_bin), "%s/gastera1n", g_tool_dir);
-    if (access(self_bin, F_OK) == 0)
-        strip_quarantine(self_bin);   /* best-effort */
 
     return 0;
 }
