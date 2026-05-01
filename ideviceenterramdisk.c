@@ -58,10 +58,6 @@
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
-/* Seconds to wait after hdiutil attach/detach so the kernel can settle. */
-#define SLEEP_HDIUTIL_ATTACH  5
-#define SLEEP_HDIUTIL_DETACH  3
-#define SLEEP_AFTER_RESIZE    1
 /* Seconds between DFU send steps to let iBSS/iBEC negotiate. */
 #define SLEEP_IBSS_AFTER_SEND 1
 #define SLEEP_IBEC_AFTER_SEND 1
@@ -1426,8 +1422,16 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
                   rdsk_dmg, ctx->mount) != 0)
         return -1;
 
-    sleep(SLEEP_HDIUTIL_ATTACH);
-
+    for (int i = 0; i < 5 * 10; i++) {
+        DIR *d = opendir(ctx->mount);
+        if (d) {
+            struct dirent *ent = readdir(d);
+            if (ent) { closedir(d); break; }
+            closedir(d);
+        }
+        usleep(100000);
+    }
+    
     /* All failure paths below must detach before returning. */
     int ret = 0;
 
@@ -1451,15 +1455,19 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
 
 detach:
-    shell_cmd("hdiutil detach -force '%s'", ctx->mount);
-    sleep(SLEEP_HDIUTIL_DETACH);
+    
+    for (int i = 0; i < 10; i++) {
+        if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0)
+            break;
+        sleep(1);
+    }
 
     if (ret != 0) return ret;
 
     if (shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging) != 0)
         return -1;
 
-    sleep(SLEEP_AFTER_RESIZE);
+    sleep(3);
 
 #undef RDSK_FAIL
     return 0;
