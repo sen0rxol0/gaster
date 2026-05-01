@@ -95,7 +95,7 @@ int kerneldiff(const char *kc_original, const char *kc_patched, const char *kc_d
     for (size_t i = 0; i < orig_size; i++) {
         if (o[i] == p[i]) continue;
 
-        if (diff_idx >= MAX_DIFF) {
+        if ((diff_idx + 1) > MAX_DIFF) {
             fprintf(stderr,
                     "kerneldiff: too many differences (max %d supported)\n",
                     MAX_DIFF);
