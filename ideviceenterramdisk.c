@@ -74,7 +74,7 @@
 #define CACHE_MANIFEST_NAME  ".complete"
 
 /* Seconds to wait after hdiutil attach/detach so the kernel can settle. */
-#define SLEEP_HDIUTIL_ATTACH  3
+#define SLEEP_HDIUTIL_ATTACH  5
 #define SLEEP_HDIUTIL_DETACH  3
 #define SLEEP_AFTER_RESIZE    1
 /* Seconds between DFU send steps to let iBSS/iBEC negotiate. */
