@@ -68,7 +68,10 @@
 
 #define STAGING_DIR      "/tmp/gastera1n_rdsk"
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
-#define CACHE_BASE_DIR   "/tmp/gastera1n_cache"
+
+#define CACHE_BASE_DIR   ".gastera1n_cache"
+/* Cache manifest file – presence signals a complete, valid cache entry. */
+#define CACHE_MANIFEST_NAME  ".complete"
 
 /* Seconds to wait after hdiutil attach/detach so the kernel can settle. */
 #define SLEEP_HDIUTIL_ATTACH  3
@@ -87,9 +90,6 @@
 #define TOOL_TSSCHECKER      "tsschecker"
 #define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
 #define TOOL_KERNEL64PATCHER "Kernel64Patcher"
-
-/* Cache manifest file – presence signals a complete, valid cache entry. */
-#define CACHE_MANIFEST_NAME  ".complete"
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1403,7 +1403,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
      */
     char ssh64_gz[PATH_MAX], ssh64_glob[PATH_MAX];
     snprintf(ssh64_gz,   sizeof(ssh64_gz),   "%s/ssh64.tar.gz",   g_tool_dir);
-    snprintf(ssh64_glob, sizeof(ssh64_glob), "%s/ssh64.tar.gz.*", g_tool_dir);
+    snprintf(ssh64_glob, sizeof(ssh64_glob), "%s/ssh64.tar.gz_*", g_tool_dir);
 
     if (access(ssh64_gz, F_OK) != 0)
         if (shell_cmd("cat %s > '%s'", ssh64_glob, ssh64_gz) != 0)
