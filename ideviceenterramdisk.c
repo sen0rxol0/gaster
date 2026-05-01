@@ -12,16 +12,6 @@
  * Kernel64Patcher) are expected in the same directory as img4,
  * decompressed on first use by ensure_tool().
  *
- * Device cache
- * ────────────
- * All patched img4 payloads are saved into a per-device cache directory:
- *
- *   /tmp/gastera1n_cache/<ecid>_<cpid>/
- *
- * On subsequent runs with ramdiskBootMode the cache is checked first; if
- * all required img4 files are present the prepare/download/decrypt/patch
- * pipeline is skipped entirely and boot proceeds immediately.
- *
  * Shell usage
  * ───────────
  * popen() is retained only for calls that are irreducibly shell-based
