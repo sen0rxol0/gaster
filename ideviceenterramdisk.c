@@ -592,7 +592,24 @@ static irecv_client_t dfu_open_client(void)
             log_error("irecv: %s\n", irecv_strerror(err));
             return NULL;
         }
-        if (err == IRECV_E_SUCCESS) break;
+        if (err == IRECV_E_SUCCESS) {
+            /* Verify we're in a mode that exposes device info.
+               DFU and all recovery modes are acceptable; WTF mode is not. */
+            int mode = 0;
+            irecv_get_mode(client, &mode);
+            if (mode == IRECV_K_DFU_MODE          ||
+                mode == IRECV_K_RECOVERY_MODE_1   ||
+                mode == IRECV_K_RECOVERY_MODE_2   ||
+                mode == IRECV_K_RECOVERY_MODE_3   ||
+                mode == IRECV_K_RECOVERY_MODE_4) {
+                break;
+            }
+            /* Wrong mode — close and retry. */
+            log_debug("irecv: unexpected mode 0x%04X, retrying...\n", mode);
+            irecv_close(client);
+            client = NULL;
+            err = IRECV_E_NO_DEVICE;
+        }
 
         sleep(1);
 
@@ -649,23 +666,45 @@ char *dfu_get_info(const char *key)
     irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
 
+    if (!devinfo && !device) {
+        int mode = 0;
+        irecv_get_mode(client, &mode);
+        log_error("dfu_get_info: no device info available (mode=0x%04X) — "
+                  "is the device in DFU mode?\n", mode);
+        irecv_close(client);
+        return NULL;
+    }
+
     char *info = NULL;
 
-    if (!strcmp(key, "ecid") && devinfo)
-        info = dup_printf("0x%016llX", devinfo->ecid);
-    else if (!strcmp(key, "cpid") && devinfo)
-        info = dup_printf("0x%04X", devinfo->cpid);
-    else if (!strcmp(key, "product_type") && device)
-        info = strdup(device->product_type);
-    else if (!strcmp(key, "model") && device)
-        info = strdup(device->hardware_model);
+    if (!strcmp(key, "ecid")) {
+        if (devinfo)
+            info = dup_printf("0x%016llX", (unsigned long long)devinfo->ecid);
+        else
+            log_error("dfu_get_info: devinfo unavailable for key 'ecid'\n");
+    } else if (!strcmp(key, "cpid")) {
+        if (devinfo)
+            info = dup_printf("0x%04X", devinfo->cpid);
+        else
+            log_error("dfu_get_info: devinfo unavailable for key 'cpid'\n");
+    } else if (!strcmp(key, "product_type")) {
+        if (device && device->product_type)
+            info = strdup(device->product_type);
+        else
+            log_error("dfu_get_info: device record unavailable for key 'product_type'\n");
+    } else if (!strcmp(key, "model")) {
+        if (device && device->hardware_model)
+            info = strdup(device->hardware_model);
+        else
+            log_error("dfu_get_info: device record unavailable for key 'model'\n");
+    } else {
+        log_error("dfu_get_info: unknown key '%s'\n", key);
+    }
 
     irecv_close(client);
 
     if (info)
         log_debug("  %s = %s\n", key, info);
-    else
-        log_error("dfu_get_info: unknown key or missing device info: %s\n", key);
 
     return info;
 }
