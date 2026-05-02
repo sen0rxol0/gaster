@@ -58,11 +58,8 @@
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
-#define SLEEP_IBSS_AFTER_SEND  4u
-#define SLEEP_AFTER_GO        5
-
-/* Reset recovery before boot. */
-#define SLEEP_AFTER_RESET     2
+#define SLEEP_AFTER_SEND_IBSS  2
+#define SLEEP_AFTER_SEND_IBEC  3
 
 /* Tool binary base-names. */
 #define TOOL_IMG4            "img4"
@@ -915,7 +912,7 @@ static int dfu_reset_reconnect(const char *context)
                  "after %s — proceeding to poll anyway\n", context);
     }
 
-    usleep(1000);  /* brief settle — mirrors Ramiel's usleep(1000) */
+    usleep(1000);
 
     return dfu_wait_ready(10, context);
 }
@@ -1819,6 +1816,12 @@ static bool needs_ibss_reset(uint32_t cpid)
            cpid == 0x8965 || cpid == 0x8010;
 }
 
+static bool needs_go_cmd(uint32_t cpid)
+{
+    return cpid == 0x8015 || cpid == 0x8012 ||
+           cpid == 0x8011 || cpid == 0x8010;
+}
+
 /*
  * needs_trust_cache_send – extracted from the inline conditional that was
  * previously buried inside stage_boot_ramdisk, making it consistent with
@@ -1839,10 +1842,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: gastera1n_reset failed\n");
         return -1;
     }
-    sleep(SLEEP_AFTER_RESET);
-
-    log_info("Waiting for DFU device...");
-    if (dfu_wait_for_device() != 0) return -1;
 
     char *cpid_str = dfu_get_info("cpid");
     if (!cpid_str) {
@@ -1857,29 +1856,12 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
     int ret = dfu_send_file(ctx->ibss_img4);
-
-    if (ret != 0 || needs_ibss_reset(cpid)) {
-        log_info("iBSS retry required (cpid=0x%04X, ret=%d) — "
-                 "resetting and resending...", cpid, ret);
-
-        if (dfu_reset_reconnect("iBSS first send") != 0) {
-            log_error("stage_boot_ramdisk: device lost after iBSS reset\n");
-            return -1;
-        }
-
-        ret = dfu_send_file(ctx->ibss_img4);
-        if (ret != 0) {
-            log_error("stage_boot_ramdisk: iBSS retry failed (ret=%d)\n", ret);
-            return -1;
-        }
-    }
-
+    sleep(SLEEP_AFTER_SEND_IBSS);
     /*
      * Confirm iBSS executed by waiting for the recovery mode transition.
      * dfu_verify_mode delegates to dfu_poll_until with expected_mode set.
      */
-    if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2,
-                        SLEEP_IBSS_AFTER_SEND, "iBSS") != 0) {
+    if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2, 1, "iBSS") != 0) {
         log_error("stage_boot_ramdisk: iBSS did not execute — "
                   "mode transition not observed\n");
         return -1;
@@ -1892,13 +1874,15 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    log_info("Sending go command...");
-    if (dfu_send_cmd("go") != 0) {
-        log_error("stage_boot_ramdisk: 'go' command failed\n");
-        return -1;
+    if (needs_go_cmd(cpid)) {
+        log_info("Sending go command...");
+        if (dfu_send_cmd("go") != 0) {
+            log_error("stage_boot_ramdisk: 'go' command failed\n");
+            return -1;
+        }
     }
-
-    sleep(SLEEP_AFTER_GO);
+    
+    sleep(SLEEP_AFTER_SEND_IBEC);
     if (dfu_reset_reconnect("iBEC") != 0) {
         log_error("stage_boot_ramdisk: device lost after iBEC\n");
         return -1;
@@ -1911,6 +1895,11 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         dfu_send_cmd("bgcolor 0 0 0")      != 0)
         log_warn("stage_boot_ramdisk: boot image setup failed (non-fatal)\n");
 
+    
+    /* ── Ramdisk ─────────────────────────────────────────────────────── */
+    if (send_payload("ramdisk", ctx->ramdisk_img4, "ramdisk") != 0)
+        return -1;
+    
     /* ── Device tree ─────────────────────────────────────────────────── */
     if (send_payload("device tree", ctx->devicetree_img4, "devicetree") != 0)
         return -1;
@@ -1920,10 +1909,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         if (send_payload("trust cache", ctx->trustcache_img4, "firmware") != 0)
             return -1;
     }
-
-    /* ── Ramdisk ─────────────────────────────────────────────────────── */
-    if (send_payload("ramdisk", ctx->ramdisk_img4, "ramdisk") != 0)
-        return -1;
 
     /* ── Kernelcache ─────────────────────────────────────────────────── */
     if (send_payload("kernelcache", ctx->kernelcache_img4, "bootx") != 0)
