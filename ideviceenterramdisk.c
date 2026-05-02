@@ -1743,60 +1743,221 @@ static int send_payload(const char *label,
     return 0;
 }
 
+/*
+ * needs_double_ibec – true for chipsets that require iBEC sent twice
+ * followed by an explicit 'go' before the rest of the sequence.
+ * (A10: 0x8010, A10X: 0x8011, A11: 0x8015)
+ */
+static bool needs_double_ibec(uint32_t cpid)
+{
+    return cpid == 0x8010 || cpid == 0x8011 || cpid == 0x8015;
+}
+
+/*
+ * needs_ibss_reset – true for chipsets that require a reset+resend
+ * after the first iBSS transfer.
+ * (A10: 0x8010, A12: 0x8960/0x8965, A11: 0x8015)
+ */
+static bool needs_ibss_reset(uint32_t cpid)
+{
+    return cpid == 0x8015 || cpid == 0x8960 ||
+           cpid == 0x8965 || cpid == 0x8010;
+}
+
+/*
+ * dfu_reset_reconnect – issue irecv_reset, close the current client,
+ * wait briefly, then reopen.  Mirrors what Ramiel does between stages.
+ * Returns 0 on success, -1 if the device does not reappear.
+ */
+static int dfu_reset_reconnect(const char *context)
+{
+    log_info("Resetting device connection after %s...", context);
+
+    irecv_client_t client = dfu_open_client();
+    if (client) {
+        irecv_reset(client);
+        irecv_close(client);
+    }
+
+    usleep(1000);   /* brief settle — mirrors Ramiel's usleep(1000) */
+
+    /* Verify the device reappears in a valid mode. */
+    return dfu_wait_ready(10, context);
+}
+
+/*
+ * dfu_verify_mode – poll until the device enumerates in expected_mode.
+ *
+ * After iBSS is accepted the device resets and re-enumerates as
+ * IRECV_K_RECOVERY_MODE_2 (PID 0x1281).  Verifying the mode change
+ * confirms iBSS executed rather than just that a USB device appeared.
+ *
+ * Returns 0 when the expected mode is seen, -1 on timeout.
+ */
+static int dfu_verify_mode(int expected_mode,
+                           unsigned int max_wait_secs,
+                           const char *context)
+{
+#define POLL_INTERVAL_US 250000u   /* 250 ms */
+
+    unsigned int elapsed_ms = 0;
+    unsigned int limit_ms   = max_wait_secs * 1000u;
+
+    /* Initial pause — let the device drop off USB before polling. */
+    usleep(500000);
+
+    log_info("Verifying device mode after %s (expecting 0x%04X)...",
+             context, expected_mode);
+
+    while (elapsed_ms < limit_ms) {
+        irecv_client_t client = NULL;
+        irecv_error_t  err    = irecv_open_with_ecid(&client, 0);
+
+        if (err == IRECV_E_SUCCESS && client) {
+            int mode = 0;
+            irecv_get_mode(client, &mode);
+            irecv_close(client);
+
+            if (mode == expected_mode) {
+                log_info("Mode verified: 0x%04X after %s (%u ms).",
+                         mode, context, elapsed_ms + 500u);
+                return 0;
+            }
+
+            log_debug("dfu_verify_mode: got mode 0x%04X, want 0x%04X — "
+                      "retrying...\n", mode, expected_mode);
+        }
+
+        usleep(POLL_INTERVAL_US);
+        elapsed_ms += POLL_INTERVAL_US / 1000u;
+    }
+
+    log_error("dfu_verify_mode: device did not reach mode 0x%04X within "
+              "%us after %s\n", expected_mode, max_wait_secs, context);
+    return -1;
+
+#undef POLL_INTERVAL_US
+}
+
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
-
-    log_info("Waiting for DFU device...");
-    if (dfu_wait_for_device() != 0) return -1;
-
-    log_info("Booting SSH ramdisk...");
-
+    
     if (gastera1n_reset() != 0) {
         log_error("stage_boot_ramdisk: gastera1n_reset failed\n");
         return -1;
     }
     sleep(SLEEP_AFTER_RESET);
 
-    /* ── iBSS ─────────────────────────────────────────────────────────── */
-    log_info("Sending iBSS...");
-    if (dfu_send_file(ctx->ibss_img4) != 0) {
-        log_error("stage_boot_ramdisk: failed to send iBSS ('%s')\n",
-                  ctx->ibss_img4);
+    log_info("Waiting for DFU device...");
+    if (dfu_wait_for_device() != 0) return -1;
+
+    /* Read cpid once — used for chipset-specific paths below. */
+    char *cpid_str = dfu_get_info("cpid");
+    if (!cpid_str) {
+        log_error("stage_boot_ramdisk: could not read cpid\n");
         return -1;
     }
-    if (dfu_wait_ready(SLEEP_IBSS_AFTER_SEND, "iBSS send") != 0)
-        return -1;
+    uint32_t cpid = (uint32_t)strtoul(cpid_str, NULL, 16);
+    free(cpid_str);
 
-    /* ── iBEC ─────────────────────────────────────────────────────────── */
+    log_info("Booting SSH ramdisk (cpid=0x%04X)...", cpid);
+
+    /* ── iBSS ────────────────────────────────────────────────────────── */
+    log_info("Sending iBSS...");
+    int ret = dfu_send_file(ctx->ibss_img4);
+
+    /*
+     * Some chipsets require: reset → reconnect → resend after the first
+     * iBSS transfer (Ramiel handles 0x8015/0x8960/0x8965/0x8010 this way).
+     * Also retry on ret==1 which signals a dummy-send requirement.
+     */
+    if (ret == 1 || needs_ibss_reset(cpid)) {
+        log_info("iBSS retry required (cpid=0x%04X, ret=%d) — "
+                 "resetting and resending...", cpid, ret);
+
+        if (dfu_reset_reconnect("iBSS first send") != 0) {
+            log_error("stage_boot_ramdisk: device lost after iBSS reset\n");
+            return -1;
+        }
+
+        ret = dfu_send_file(ctx->ibss_img4);
+        if (ret != 0) {
+            log_error("stage_boot_ramdisk: iBSS retry failed (ret=%d)\n", ret);
+            return -1;
+        }
+    } else if (ret != 0) {
+        log_error("stage_boot_ramdisk: iBSS send failed (ret=%d)\n", ret);
+        return -1;
+    }
+
+    /* Verify iBSS executed by confirming recovery mode transition. */
+    if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2,
+                        SLEEP_IBSS_AFTER_SEND, "iBSS") != 0) {
+        log_error("stage_boot_ramdisk: iBSS did not execute — "
+                  "mode transition not observed\n");
+        return -1;
+    }
+
+    /* ── iBEC ────────────────────────────────────────────────────────── */
     log_info("Sending iBEC...");
     if (dfu_send_file(ctx->ibec_img4) != 0) {
-        log_error("stage_boot_ramdisk: failed to send iBEC ('%s')\n",
-                  ctx->ibec_img4);
+        log_error("stage_boot_ramdisk: iBEC send failed\n");
         return -1;
     }
-    if (dfu_wait_ready(SLEEP_IBEC_AFTER_SEND, "iBEC send") != 0)
-        return -1;
+    sleep(3);
 
-    if (dfu_send_cmd("go") != 0) {
-        log_error("stage_boot_ramdisk: 'go' command failed\n");
-        return -1;
+    /*
+     * A10/A10X/A11 require iBEC sent a second time, then an explicit
+     * 'go' command before the rest of the sequence can proceed.
+     */
+    if (needs_double_ibec(cpid)) {
+        log_info("Sending iBEC second time (cpid=0x%04X)...", cpid);
+        if (dfu_send_file(ctx->ibec_img4) != 0) {
+            log_error("stage_boot_ramdisk: iBEC second send failed\n");
+            return -1;
+        }
+        sleep(1);
+        log_info("Sending go command...");
+        if (dfu_send_cmd("go") != 0) {
+            log_error("stage_boot_ramdisk: 'go' command failed\n");
+            return -1;
+        }
+        sleep(1);
     }
+
+    /* Full reset+reconnect cycle after iBEC — mirrors Ramiel's pattern. */
     sleep(SLEEP_AFTER_GO);
+    if (dfu_reset_reconnect("iBEC") != 0) {
+        log_error("stage_boot_ramdisk: device lost after iBEC\n");
+        return -1;
+    }
 
-    /* ── Boot image (cosmetic — non-fatal on failure) ─────────────────── */
+    /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
     if (dfu_send_file(ctx->bootim_img4) != 0)
-        log_debug("stage_boot_ramdisk: boot image send failed (non-fatal)\n");
+        log_warn("stage_boot_ramdisk: boot image send failed (non-fatal)\n");
     
     if (dfu_send_cmd("setpicture 0x1") != 0 ||
              dfu_send_cmd("bgcolor 255 55 55") != 0)
-        log_debug("stage_boot_ramdisk: boot image commands failed (non-fatal)\n");
+        log_warn("stage_boot_ramdisk: boot image commands failed (non-fatal)\n");
 
-    /* ── Device tree, ramdisk, trustcache, kernel ────────────────────── */
-    if (send_payload("device tree",  ctx->devicetree_img4,  "devicetree") != 0) return -1;
-    if (send_payload("ramdisk",      ctx->ramdisk_img4,     "ramdisk")    != 0) return -1;
-    if (send_payload("trustcache",  ctx->trustcache_img4,  "firmware")   != 0) return -1;
-    if (send_payload("kernelcache",  ctx->kernelcache_img4, "bootx")      != 0) return -1;
+    /* ── Device tree ─────────────────────────────────────────────────── */
+    if (send_payload("device tree", ctx->devicetree_img4, "devicetree") != 0)
+        return -1;
+
+    /* ── Trust cache (conditional on chipset) ────────────────────────── */
+    if (cpid == 0x8015 || cpid == 0x8010 || cpid == 0x7000) {
+        if (send_payload("trust cache", ctx->trustcache_img4, "firmware") != 0)
+            return -1;
+    }
+
+    /* ── Ramdisk ─────────────────────────────────────────────────────── */
+    if (send_payload("ramdisk", ctx->ramdisk_img4, "ramdisk") != 0)
+        return -1;
+
+    /* ── Kernelcache ─────────────────────────────────────────────────── */
+    if (send_payload("kernelcache", ctx->kernelcache_img4, "bootx") != 0)
+        return -1;
 
     log_info("Boot sequence complete — device is starting up.");
     return 0;
