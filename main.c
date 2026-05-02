@@ -14,9 +14,10 @@
 #include "ideviceenterramdisk.h"
 #include "gastera1n.h"
 
-extern bool         DEBUG_ENABLED;
-extern bool         ramdiskBootMode;
-bool         pwnDFUMode;
+
+extern bool ramdiskBootMode;
+bool pwnDFUMode;
+bool DEBUG_ENABLED = false;
 
 int main(int argc, char **argv)
 {
