@@ -1801,12 +1801,6 @@ static int send_payload(const char *label,
     return 0;
 }
 
-/* Device requires reset + resend after the first iBSS transfer. */
-static bool needs_ibss_reset(uint32_t cpid)
-{
-    return cpid == 0x8015 || cpid == 0x8960 ||
-           cpid == 0x8965 || cpid == 0x8010;
-}
 
 static bool needs_go_cmd(uint32_t cpid)
 {
@@ -1847,15 +1841,14 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
-    int ret = dfu_send_file(ctx->ibss_img4);
+    if (dfu_send_file(ctx->ibss_img4) != 0) {        // check the return
+        log_error("stage_boot_ramdisk: iBSS send failed\n");
+        return -1;
+    }
     sleep(SLEEP_AFTER_SEND_IBSS);
-    /*
-     * Confirm iBSS executed by waiting for the recovery mode transition.
-     * dfu_verify_mode delegates to dfu_poll_until with expected_mode set.
-     */
-    if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2, 1, "iBSS") != 0) {
-        log_error("stage_boot_ramdisk: iBSS did not execute — "
-                  "mode transition not observed\n");
+    
+    if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2, 3, "iBSS") != 0) {
+        log_error("stage_boot_ramdisk: iBSS did not execute\n");
         return -1;
     }
 
