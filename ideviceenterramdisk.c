@@ -772,11 +772,12 @@ static irecv_client_t dfu_open_client(void)
  * user is expected to put the device in DFU mode manually and the tool
  * should wait as long as needed.  Ctrl-C aborts.
  */
-#define DFU_POLL_INTERVAL_MS  500u
 
 int dfu_wait_for_device(void)
 {
-    log_info("Searching for DFU mode device — put device in DFU now...");
+#define DFU_POLL_INTERVAL_MS  500u
+    
+    log_info("Searching for DFU mode device...");
 
     unsigned int waited_s = 0;
 
@@ -804,9 +805,51 @@ int dfu_wait_for_device(void)
         usleep(DFU_POLL_INTERVAL_MS * 1000u);
         waited_s += DFU_POLL_INTERVAL_MS / 1000u;
     }
+#undef DFU_POLL_INTERVAL_MS
 }
 
-#undef DFU_POLL_INTERVAL_MS
+
+
+/*
+ * dfu_wait_ready – wait for the DFU device to re-enumerate after a send.
+ *
+ * After iBSS/iBEC is accepted the device resets and briefly disappears from
+ * USB.  A single sleep is not reliable — we instead poll dfu_open_client()
+ * with a short interval for up to max_wait_secs seconds.
+ *
+ * context is a short label used in error messages only.
+ * Returns 0 when the device is reachable, -1 on timeout.
+ */
+int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
+{
+#define POLL_INTERVAL_US  250000u   /* 250 ms between probes */
+    unsigned int elapsed_ms = 0;
+    unsigned int limit_ms   = max_wait_secs * 1000u;
+
+    log_info("Waiting for device after %s (up to %us)...", context, max_wait_secs);
+
+    /* Brief initial pause — give the device time to drop off USB before
+     * we start polling, so we don't mistake the old handle for a ready state. */
+    usleep(500000);   /* 500 ms */
+
+    while (elapsed_ms < limit_ms) {
+        irecv_client_t client = dfu_open_client();
+        if (client) {
+            irecv_close(client);
+            log_info("Device ready after %s (%u ms).",
+                     context, elapsed_ms + 500u);
+            return 0;
+        }
+        usleep(POLL_INTERVAL_US);
+        elapsed_ms += POLL_INTERVAL_US / 1000u;
+    }
+
+    log_error("dfu_wait_ready: device did not re-enumerate within %us "
+              "after %s\n", max_wait_secs, context);
+    return -1;
+
+#undef POLL_INTERVAL_US
+}
 
 /*
  * dfu_get_info – return a heap-allocated string for the given key.
@@ -866,47 +909,6 @@ int dfu_send_cmd(const char *command)
     irecv_error_t err = irecv_send_command(client, command);
     irecv_close(client);
     return (err == IRECV_E_SUCCESS) ? 0 : -1;
-}
-
-/*
- * dfu_wait_ready – wait for the DFU device to re-enumerate after a send.
- *
- * After iBSS/iBEC is accepted the device resets and briefly disappears from
- * USB.  A single sleep is not reliable — we instead poll dfu_open_client()
- * with a short interval for up to max_wait_secs seconds.
- *
- * context is a short label used in error messages only.
- * Returns 0 when the device is reachable, -1 on timeout.
- */
-int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
-{
-#define POLL_INTERVAL_US  250000u   /* 250 ms between probes */
-    unsigned int elapsed_ms = 0;
-    unsigned int limit_ms   = max_wait_secs * 1000u;
-
-    log_info("Waiting for device after %s (up to %us)...", context, max_wait_secs);
-
-    /* Brief initial pause — give the device time to drop off USB before
-     * we start polling, so we don't mistake the old handle for a ready state. */
-    usleep(500000);   /* 500 ms */
-
-    while (elapsed_ms < limit_ms) {
-        irecv_client_t client = dfu_open_client();
-        if (client) {
-            irecv_close(client);
-            log_info("Device ready after %s (%u ms).",
-                     context, elapsed_ms + 500u);
-            return 0;
-        }
-        usleep(POLL_INTERVAL_US);
-        elapsed_ms += POLL_INTERVAL_US / 1000u;
-    }
-
-    log_error("dfu_wait_ready: device did not re-enumerate within %us "
-              "after %s\n", max_wait_secs, context);
-    return -1;
-
-#undef POLL_INTERVAL_US
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
