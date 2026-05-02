@@ -1496,12 +1496,21 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
                   ctx->mount, ssh64_gz) != 0)
         RDSK_FAIL("stage_build_ramdisk: tar extract of ssh64 failed");
 
-    if (shell_cmd("chmod -R 0755 '%s/sshd/bin' '%s/sshd/usr'",
-                  ctx->mount, ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: chmod on sshd tree failed");
-
     if (shell_cmd("rsync -auK '%s/sshd/' '%s/'", ctx->mount, ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: rsync of sshd tree failed");
+    
+    if (shell_cmd(
+            "for d in"
+            " '%1$s/bin'"
+            " '%1$s/usr/bin'"
+            " '%1$s/usr/sbin'"
+            " '%1$s/usr/local/bin'; do"
+            "  chmod -R 0755 \"$d\"; "
+            "done",
+            ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: chmod on merged binary dirs failed");
+
+    
 
     if (shell_cmd(
             "cd '%s' && rm -rf "
