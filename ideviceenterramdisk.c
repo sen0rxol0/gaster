@@ -58,10 +58,22 @@
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Sleep constants for the boot sequence
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Seconds to sleep between the first and second iBEC sends. */
+#define SLEEP_IBEC_BETWEEN_SENDS  3u
+/* Seconds to sleep after the second iBEC send (before 'go'). */
+#define SLEEP_IBEC_BEFORE_GO      1u
+/* Seconds to sleep after the 'go' command. */
+#define SLEEP_AFTER_GO_CMD        1u
+
 /* Give iBSS/iBEC up to 4 seconds to re-enumerate — plenty for slow hardware. */
-#define SLEEP_IBSS_AFTER_SEND  4u
-#define SLEEP_IBEC_AFTER_SEND  4u
-#define SLEEP_AFTER_GO        5
+//#define SLEEP_IBSS_AFTER_SEND  4u
+//#define SLEEP_IBEC_AFTER_SEND  4u
+//#define SLEEP_AFTER_GO        5
+
 /* Reset recovery before boot. */
 #define SLEEP_AFTER_RESET     2
 
@@ -764,27 +776,110 @@ static irecv_client_t dfu_open_client(void)
     return NULL;
 }
 
-/*
- * dfu_wait_for_device – poll until a DFU/recovery device appears, with a
- * printed countdown so the user knows the tool is still waiting.
+/* ═══════════════════════════════════════════════════════════════════════════
+ * dfu_poll_until – unified polling primitive
  *
- * Polls every POLL_INTERVAL_MS milliseconds with no hard timeout — the
- * user is expected to put the device in DFU mode manually and the tool
- * should wait as long as needed.  Ctrl-C aborts.
- */
+ * Replaces the near-identical bodies of dfu_wait_ready and dfu_verify_mode.
+ *
+ * Polls every POLL_INTERVAL_US microseconds for up to max_wait_secs seconds.
+ * On each probe the device is opened; if expected_mode >= 0 the current mode
+ * must match it, otherwise any valid mode is accepted.
+ *
+ * Returns 0 when the condition is met, -1 on timeout.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define POLL_INTERVAL_US 250000u   /* 250 ms between probes */
 
+static int dfu_poll_until(int            expected_mode,
+                          unsigned int   max_wait_secs,
+                          const char    *context)
+{
+    unsigned int elapsed_ms = 0;
+    unsigned int limit_ms   = max_wait_secs * 1000u;
+
+    if (expected_mode >= 0)
+        log_info("Waiting for device mode 0x%04X after %s (up to %us)...",
+                 expected_mode, context, max_wait_secs);
+    else
+        log_info("Waiting for device after %s (up to %us)...",
+                 context, max_wait_secs);
+
+    /* Brief initial pause so the device can drop off USB before we probe. */
+    usleep(500000);  /* 500 ms */
+
+    while (elapsed_ms < limit_ms) {
+        irecv_client_t client = NULL;
+        irecv_error_t  err    = irecv_open_with_ecid(&client, 0);
+
+        if (err == IRECV_E_SUCCESS && client) {
+            int mode = 0;
+            irecv_get_mode(client, &mode);
+            irecv_close(client);
+
+            bool mode_ok = (expected_mode < 0) ||
+                           (mode == expected_mode);
+
+            if (mode_ok) {
+                log_info("Device ready after %s (%u ms).",
+                         context, elapsed_ms + 500u);
+                return 0;
+            }
+
+            log_debug("dfu_poll_until: got mode 0x%04X, want %s — retrying...\n",
+                      mode,
+                      expected_mode < 0 ? "any" : "specific");
+        }
+
+        usleep(POLL_INTERVAL_US);
+        elapsed_ms += POLL_INTERVAL_US / 1000u;
+    }
+
+    log_error("dfu_poll_until: device did not reach expected state within "
+              "%us after %s\n", max_wait_secs, context);
+    return -1;
+}
+
+#undef POLL_INTERVAL_US
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * dfu_wait_ready – thin wrapper: accept any valid DFU/recovery mode.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
+{
+    return dfu_poll_until(-1, max_wait_secs, context);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * dfu_verify_mode – thin wrapper: require a specific recovery mode.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+static int dfu_verify_mode(int          expected_mode,
+                           unsigned int max_wait_secs,
+                           const char  *context)
+{
+    return dfu_poll_until(expected_mode, max_wait_secs, context);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * dfu_wait_for_device – poll until any DFU/recovery device appears.
+ *
+ * BUG FIX: the original code computed `waited_s += DFU_POLL_INTERVAL_MS / 1000`
+ * which equals 500 / 1000 = 0 under integer division, so waited_s never
+ * advanced and the "still waiting" message never fired.  Fixed by tracking
+ * elapsed time in milliseconds and dividing only for the display.
+ * ═══════════════════════════════════════════════════════════════════════════ */
 int dfu_wait_for_device(void)
 {
 #define DFU_POLL_INTERVAL_MS  500u
-    
+
     log_info("Searching for DFU mode device...");
 
-    unsigned int waited_s = 0;
+    unsigned int elapsed_ms = 0;
 
     for (;;) {
         irecv_client_t client = dfu_open_client();
         if (client) {
-            /* Configure auto-boot and persist it. */
             irecv_error_t err = irecv_setenv(client, "auto-boot", "true");
             if (err != IRECV_E_SUCCESS)
                 log_error("irecv_setenv: %s\n", irecv_strerror(err));
@@ -794,61 +889,48 @@ int dfu_wait_for_device(void)
                 log_error("irecv_saveenv: %s\n", irecv_strerror(err));
 
             irecv_close(client);
-            log_info("DFU device found after %us.", waited_s);
+            log_info("DFU device found after %us.", elapsed_ms / 1000u);
             return 0;
         }
 
         /* Print a waiting indicator every 5 seconds. */
-        if (waited_s % 5 == 0)
-            log_info("Still waiting for DFU device... (%us elapsed)", waited_s);
+        if (elapsed_ms % 5000u == 0)
+            log_info("Still waiting for DFU device... (%us elapsed)",
+                     elapsed_ms / 1000u);
 
         usleep(DFU_POLL_INTERVAL_MS * 1000u);
-        waited_s += DFU_POLL_INTERVAL_MS / 1000u;
+        elapsed_ms += DFU_POLL_INTERVAL_MS;   /* accumulate in ms — no truncation */
     }
+
 #undef DFU_POLL_INTERVAL_MS
 }
 
 
-
-/*
- * dfu_wait_ready – wait for the DFU device to re-enumerate after a send.
+/* ═══════════════════════════════════════════════════════════════════════════
+ * dfu_reset_reconnect – issue irecv_reset, close, wait for re-enumeration.
  *
- * After iBSS/iBEC is accepted the device resets and briefly disappears from
- * USB.  A single sleep is not reliable — we instead poll dfu_open_client()
- * with a short interval for up to max_wait_secs seconds.
- *
- * context is a short label used in error messages only.
- * Returns 0 when the device is reachable, -1 on timeout.
- */
-int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
+ * BUG FIX: the original silently skipped the reset when dfu_open_client()
+ * failed (client was NULL) and then called dfu_wait_ready() regardless.
+ * The reset is now best-effort (logged as a warning on failure) but the
+ * function still proceeds to poll for re-enumeration either way, matching
+ * the intent of all call sites.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+static int dfu_reset_reconnect(const char *context)
 {
-#define POLL_INTERVAL_US  250000u   /* 250 ms between probes */
-    unsigned int elapsed_ms = 0;
-    unsigned int limit_ms   = max_wait_secs * 1000u;
+    log_info("Resetting device connection after %s...", context);
 
-    log_info("Waiting for device after %s (up to %us)...", context, max_wait_secs);
-
-    /* Brief initial pause — give the device time to drop off USB before
-     * we start polling, so we don't mistake the old handle for a ready state. */
-    usleep(500000);   /* 500 ms */
-
-    while (elapsed_ms < limit_ms) {
-        irecv_client_t client = dfu_open_client();
-        if (client) {
-            irecv_close(client);
-            log_info("Device ready after %s (%u ms).",
-                     context, elapsed_ms + 500u);
-            return 0;
-        }
-        usleep(POLL_INTERVAL_US);
-        elapsed_ms += POLL_INTERVAL_US / 1000u;
+    irecv_client_t client = dfu_open_client();
+    if (client) {
+        irecv_reset(client);
+        irecv_close(client);
+    } else {
+        log_warn("dfu_reset_reconnect: could not open client for reset "
+                 "after %s — proceeding to poll anyway\n", context);
     }
 
-    log_error("dfu_wait_ready: device did not re-enumerate within %us "
-              "after %s\n", max_wait_secs, context);
-    return -1;
+    usleep(1000);  /* brief settle — mirrors Ramiel's usleep(1000) */
 
-#undef POLL_INTERVAL_US
+    return dfu_wait_ready(10, context);
 }
 
 /*
@@ -1743,21 +1825,18 @@ static int send_payload(const char *label,
     return 0;
 }
 
-/*
- * needs_double_ibec – true for chipsets that require iBEC sent twice
- * followed by an explicit 'go' before the rest of the sequence.
- * (A10: 0x8010, A10X: 0x8011, A11: 0x8015)
- */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Chipset predicates
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/* iBEC must be sent twice, followed by an explicit 'go'. */
 static bool needs_double_ibec(uint32_t cpid)
 {
     return cpid == 0x8010 || cpid == 0x8011 || cpid == 0x8015;
 }
 
-/*
- * needs_ibss_reset – true for chipsets that require a reset+resend
- * after the first iBSS transfer.
- * (A10: 0x8010, A12: 0x8960/0x8965, A11: 0x8015)
- */
+/* Device requires reset + resend after the first iBSS transfer. */
 static bool needs_ibss_reset(uint32_t cpid)
 {
     return cpid == 0x8015 || cpid == 0x8960 ||
@@ -1765,83 +1844,21 @@ static bool needs_ibss_reset(uint32_t cpid)
 }
 
 /*
- * dfu_reset_reconnect – issue irecv_reset, close the current client,
- * wait briefly, then reopen.  Mirrors what Ramiel does between stages.
- * Returns 0 on success, -1 if the device does not reappear.
+ * needs_trust_cache_send – extracted from the inline conditional that was
+ * previously buried inside stage_boot_ramdisk, making it consistent with
+ * the other two chipset predicates and easy to update.
  */
-static int dfu_reset_reconnect(const char *context)
+static bool needs_trust_cache_send(uint32_t cpid)
 {
-    log_info("Resetting device connection after %s...", context);
-
-    irecv_client_t client = dfu_open_client();
-    if (client) {
-        irecv_reset(client);
-        irecv_close(client);
-    }
-
-    usleep(1000);   /* brief settle — mirrors Ramiel's usleep(1000) */
-
-    /* Verify the device reappears in a valid mode. */
-    return dfu_wait_ready(10, context);
+    return cpid == 0x8015 || cpid == 0x8010 || cpid == 0x7000;
 }
 
-/*
- * dfu_verify_mode – poll until the device enumerates in expected_mode.
- *
- * After iBSS is accepted the device resets and re-enumerates as
- * IRECV_K_RECOVERY_MODE_2 (PID 0x1281).  Verifying the mode change
- * confirms iBSS executed rather than just that a USB device appeared.
- *
- * Returns 0 when the expected mode is seen, -1 on timeout.
- */
-static int dfu_verify_mode(int expected_mode,
-                           unsigned int max_wait_secs,
-                           const char *context)
-{
-#define POLL_INTERVAL_US 250000u   /* 250 ms */
 
-    unsigned int elapsed_ms = 0;
-    unsigned int limit_ms   = max_wait_secs * 1000u;
-
-    /* Initial pause — let the device drop off USB before polling. */
-    usleep(500000);
-
-    log_info("Verifying device mode after %s (expecting 0x%04X)...",
-             context, expected_mode);
-
-    while (elapsed_ms < limit_ms) {
-        irecv_client_t client = NULL;
-        irecv_error_t  err    = irecv_open_with_ecid(&client, 0);
-
-        if (err == IRECV_E_SUCCESS && client) {
-            int mode = 0;
-            irecv_get_mode(client, &mode);
-            irecv_close(client);
-
-            if (mode == expected_mode) {
-                log_info("Mode verified: 0x%04X after %s (%u ms).",
-                         mode, context, elapsed_ms + 500u);
-                return 0;
-            }
-
-            log_debug("dfu_verify_mode: got mode 0x%04X, want 0x%04X — "
-                      "retrying...\n", mode, expected_mode);
-        }
-
-        usleep(POLL_INTERVAL_US);
-        elapsed_ms += POLL_INTERVAL_US / 1000u;
-    }
-
-    log_error("dfu_verify_mode: device did not reach mode 0x%04X within "
-              "%us after %s\n", expected_mode, max_wait_secs, context);
-    return -1;
-
-#undef POLL_INTERVAL_US
-}
-
+/* ═══════════════════════════════════════════════════════════════════════════
+ * stage_boot_ramdisk
+ * ═══════════════════════════════════════════════════════════════════════════ */
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
-    
     if (gastera1n_reset() != 0) {
         log_error("stage_boot_ramdisk: gastera1n_reset failed\n");
         return -1;
@@ -1851,7 +1868,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     log_info("Waiting for DFU device...");
     if (dfu_wait_for_device() != 0) return -1;
 
-    /* Read cpid once — used for chipset-specific paths below. */
     char *cpid_str = dfu_get_info("cpid");
     if (!cpid_str) {
         log_error("stage_boot_ramdisk: could not read cpid\n");
@@ -1866,11 +1882,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     log_info("Sending iBSS...");
     int ret = dfu_send_file(ctx->ibss_img4);
 
-    /*
-     * Some chipsets require: reset → reconnect → resend after the first
-     * iBSS transfer (Ramiel handles 0x8015/0x8960/0x8965/0x8010 this way).
-     * Also retry on ret==1 which signals a dummy-send requirement.
-     */
     if (ret == 1 || needs_ibss_reset(cpid)) {
         log_info("iBSS retry required (cpid=0x%04X, ret=%d) — "
                  "resetting and resending...", cpid, ret);
@@ -1890,7 +1901,10 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    /* Verify iBSS executed by confirming recovery mode transition. */
+    /*
+     * Confirm iBSS executed by waiting for the recovery mode transition.
+     * dfu_verify_mode delegates to dfu_poll_until with expected_mode set.
+     */
     if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2,
                         SLEEP_IBSS_AFTER_SEND, "iBSS") != 0) {
         log_error("stage_boot_ramdisk: iBSS did not execute — "
@@ -1904,28 +1918,24 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: iBEC send failed\n");
         return -1;
     }
-    sleep(3);
+    sleep(SLEEP_IBEC_BETWEEN_SENDS);
 
-    /*
-     * A10/A10X/A11 require iBEC sent a second time, then an explicit
-     * 'go' command before the rest of the sequence can proceed.
-     */
     if (needs_double_ibec(cpid)) {
         log_info("Sending iBEC second time (cpid=0x%04X)...", cpid);
         if (dfu_send_file(ctx->ibec_img4) != 0) {
             log_error("stage_boot_ramdisk: iBEC second send failed\n");
             return -1;
         }
-        sleep(1);
+        sleep(SLEEP_IBEC_BEFORE_GO);
+
         log_info("Sending go command...");
         if (dfu_send_cmd("go") != 0) {
             log_error("stage_boot_ramdisk: 'go' command failed\n");
             return -1;
         }
-        sleep(1);
+        sleep(SLEEP_AFTER_GO_CMD);
     }
 
-    /* Full reset+reconnect cycle after iBEC — mirrors Ramiel's pattern. */
     sleep(SLEEP_AFTER_GO);
     if (dfu_reset_reconnect("iBEC") != 0) {
         log_error("stage_boot_ramdisk: device lost after iBEC\n");
@@ -1934,19 +1944,17 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 
     /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
-    if (dfu_send_file(ctx->bootim_img4) != 0)
-        log_warn("stage_boot_ramdisk: boot image send failed (non-fatal)\n");
-    
-    if (dfu_send_cmd("setpicture 0x1") != 0 ||
-             dfu_send_cmd("bgcolor 255 55 55") != 0)
-        log_warn("stage_boot_ramdisk: boot image commands failed (non-fatal)\n");
+    if (dfu_send_file(ctx->bootim_img4)       != 0 ||
+        dfu_send_cmd("setpicture 0x1")         != 0 ||
+        dfu_send_cmd("bgcolor 255 55 55")      != 0)
+        log_warn("stage_boot_ramdisk: boot image setup failed (non-fatal)\n");
 
     /* ── Device tree ─────────────────────────────────────────────────── */
     if (send_payload("device tree", ctx->devicetree_img4, "devicetree") != 0)
         return -1;
 
-    /* ── Trust cache (conditional on chipset) ────────────────────────── */
-    if (cpid == 0x8015 || cpid == 0x8010 || cpid == 0x7000) {
+    /* ── Trust cache (chipset-conditional) ───────────────────────────── */
+    if (needs_trust_cache_send(cpid)) {
         if (send_payload("trust cache", ctx->trustcache_img4, "firmware") != 0)
             return -1;
     }
