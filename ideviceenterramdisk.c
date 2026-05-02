@@ -724,14 +724,23 @@ int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * DFU / irecovery helpers
- * ═══════════════════════════════════════════════════════════════════════════ */
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Three-tier layout:
+ *
+ *   Primitives   dfu_open_client, dfu_poll_until, dfu_with_client
+ *   Helpers      dfu_wait_ready, dfu_verify_mode, dfu_reset_reconnect
+ *   Public API   dfu_wait_for_device, dfu_get_info, dfu_send_file, dfu_send_cmd
+ */
+
+
+/* ─── Primitives ──────────────────────────────────────────────────────────── */
 
 /*
- * dfu_open_client – single attempt to open a DFU/recovery client.
+ * dfu_open_client – open and validate a DFU/recovery client, single attempt.
  *
- * Returns a connected client on success, NULL if no device is present or
- * the device is in an unusable mode.  Does NOT retry — callers that need
- * retry logic implement their own loop (dfu_wait_for_device, dfu_wait_ready).
+ * Returns a connected client in a usable recovery mode, or NULL.
+ * Does not retry — callers that need retry logic use dfu_poll_until.
  */
 static irecv_client_t dfu_open_client(void)
 {
@@ -748,38 +757,34 @@ static irecv_client_t dfu_open_client(void)
     int mode = 0;
     irecv_get_mode(client, &mode);
 
-    if (mode == IRECV_K_DFU_MODE        ||
-        mode == IRECV_K_RECOVERY_MODE_1 ||
-        mode == IRECV_K_RECOVERY_MODE_2 ||
-        mode == IRECV_K_RECOVERY_MODE_3 ||
-        mode == IRECV_K_RECOVERY_MODE_4)
-        return client;
-
-    log_debug("dfu_open_client: unexpected mode 0x%04X\n", mode);
-    irecv_close(client);
-    return NULL;
+    switch (mode) {
+        case IRECV_K_DFU_MODE:
+        case IRECV_K_RECOVERY_MODE_1:
+        case IRECV_K_RECOVERY_MODE_2:
+        case IRECV_K_RECOVERY_MODE_3:
+        case IRECV_K_RECOVERY_MODE_4:
+            return client;
+        default:
+            log_debug("dfu_open_client: unexpected mode 0x%04X\n", mode);
+            irecv_close(client);
+            return NULL;
+    }
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * dfu_poll_until – unified polling primitive
- *
- * Replaces the near-identical bodies of dfu_wait_ready and dfu_verify_mode.
+/*
+ * dfu_poll_until – core polling primitive used by every wait/verify function.
  *
  * Polls every POLL_INTERVAL_US microseconds for up to max_wait_secs seconds.
- * On each probe the device is opened; if expected_mode >= 0 the current mode
- * must match it, otherwise any valid mode is accepted.
+ * If expected_mode >= 0 the current mode must match it exactly; otherwise any
+ * valid mode is accepted.
  *
  * Returns 0 when the condition is met, -1 on timeout.
- * ═══════════════════════════════════════════════════════════════════════════ */
-#define POLL_INTERVAL_US 250000u   /* 250 ms between probes */
+ */
+#define POLL_INTERVAL_US 250000u   /* 250 ms */
 
-static int dfu_poll_until(int            expected_mode,
-                          unsigned int   max_wait_secs,
-                          const char    *context)
+static int dfu_poll_until(int expected_mode, unsigned int max_wait_secs,
+                          const char *context)
 {
-    unsigned int elapsed_ms = 0;
-    unsigned int limit_ms   = max_wait_secs * 1000u;
-
     if (expected_mode >= 0)
         log_info("Waiting for device mode 0x%04X after %s (up to %us)...",
                  expected_mode, context, max_wait_secs);
@@ -787,75 +792,112 @@ static int dfu_poll_until(int            expected_mode,
         log_info("Waiting for device after %s (up to %us)...",
                  context, max_wait_secs);
 
-    /* Brief initial pause so the device can drop off USB before we probe. */
-    usleep(500000);  /* 500 ms */
+    usleep(500000); /* 500 ms: let the device drop off USB before first probe */
+
+    const unsigned int limit_ms = max_wait_secs * 1000u;
+    unsigned int elapsed_ms = 0;
 
     while (elapsed_ms < limit_ms) {
-        irecv_client_t client = NULL;
-        irecv_error_t  err    = irecv_open_with_ecid(&client, 0);
-
-        if (err == IRECV_E_SUCCESS && client) {
+        irecv_client_t client = dfu_open_client();
+        if (client) {
             int mode = 0;
             irecv_get_mode(client, &mode);
             irecv_close(client);
 
-            bool mode_ok = (expected_mode < 0) ||
-                           (mode == expected_mode);
-
-            if (mode_ok) {
+            if (expected_mode < 0 || mode == expected_mode) {
                 log_info("Device ready after %s (%u ms).",
                          context, elapsed_ms + 500u);
                 return 0;
             }
-
-            log_debug("dfu_poll_until: got mode 0x%04X, want %s — retrying...\n",
-                      mode,
-                      expected_mode < 0 ? "any" : "specific");
+            log_debug("dfu_poll_until: mode 0x%04X, want %s — retrying\n",
+                      mode, expected_mode < 0 ? "any" : "specific");
         }
 
         usleep(POLL_INTERVAL_US);
         elapsed_ms += POLL_INTERVAL_US / 1000u;
     }
 
-    log_error("dfu_poll_until: device did not reach expected state within "
-              "%us after %s\n", max_wait_secs, context);
+    log_error("dfu_poll_until: device did not reach expected state "
+              "within %us after %s\n", max_wait_secs, context);
     return -1;
 }
 
 #undef POLL_INTERVAL_US
 
+/*
+ * dfu_client_cb_t – callback type for dfu_with_client.
+ *
+ * The callback receives the open client and a caller-supplied context
+ * pointer.  It must not close the client — dfu_with_client does that.
+ * Return 0 on success, -1 on failure.
+ */
+typedef int (*dfu_client_cb_t)(irecv_client_t client, void *ctx);
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * dfu_wait_ready – thin wrapper: accept any valid DFU/recovery mode.
- * ═══════════════════════════════════════════════════════════════════════════ */
+/*
+ * dfu_with_client – open a client, invoke cb, close.
+ *
+ * Eliminates the open/error-check/close boilerplate that was duplicated
+ * across dfu_send_file, dfu_send_cmd, dfu_get_info, and dfu_wait_for_device.
+ *
+ * Returns 0 on success, -1 if the client could not be opened or if cb fails.
+ */
+static int dfu_with_client(dfu_client_cb_t cb, void *ctx)
+{
+    irecv_client_t client = dfu_open_client();
+    if (!client) {
+        log_error("dfu_with_client: could not open client\n");
+        return -1;
+    }
+    int ret = cb(client, ctx);
+    irecv_close(client);
+    return ret;
+}
+
+
+/* ─── Coordination helpers ────────────────────────────────────────────────── */
+
+/* Accept any valid DFU/recovery mode. */
 int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
 {
     return dfu_poll_until(-1, max_wait_secs, context);
 }
 
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * dfu_verify_mode – thin wrapper: require a specific recovery mode.
- * ═══════════════════════════════════════════════════════════════════════════ */
-static int dfu_verify_mode(int          expected_mode,
-                           unsigned int max_wait_secs,
-                           const char  *context)
+/* Require a specific recovery mode. */
+static int dfu_verify_mode(int expected_mode, unsigned int max_wait_secs,
+                           const char *context)
 {
     return dfu_poll_until(expected_mode, max_wait_secs, context);
 }
 
+/* Issue a reset, close, then poll until the device re-enumerates. */
+static int dfu_reset_reconnect(const char *context)
+{
+    log_info("Resetting device connection after %s...", context);
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * dfu_wait_for_device – poll until any DFU/recovery device appears.
- *
- * BUG FIX: the original code computed `waited_s += DFU_POLL_INTERVAL_MS / 1000`
- * which equals 500 / 1000 = 0 under integer division, so waited_s never
- * advanced and the "still waiting" message never fired.  Fixed by tracking
- * elapsed time in milliseconds and dividing only for the display.
- * ═══════════════════════════════════════════════════════════════════════════ */
+    irecv_client_t client = dfu_open_client();
+    if (client) {
+        irecv_reset(client);
+        irecv_close(client);
+    } else {
+        log_warn("dfu_reset_reconnect: could not open client for reset "
+                 "after %s — proceeding to poll anyway\n", context);
+    }
+
+    usleep(500000); /* 500 ms: was 1 µs (almost certainly a typo) */
+
+    return dfu_wait_ready(10, context);
+}
+
+
+/* ─── Public API ──────────────────────────────────────────────────────────── */
+
+/*
+ * dfu_wait_for_device – block until a DFU/recovery device appears, then
+ * set auto-boot and save environment.
+ */
 int dfu_wait_for_device(void)
 {
-#define DFU_POLL_INTERVAL_MS  500u
+#define DFU_POLL_INTERVAL_MS 500u
 
     log_info("Searching for DFU mode device...");
 
@@ -877,104 +919,122 @@ int dfu_wait_for_device(void)
             return 0;
         }
 
-        /* Print a waiting indicator every 5 seconds. */
         if (elapsed_ms % 5000u == 0)
             log_info("Still waiting for DFU device... (%us elapsed)",
                      elapsed_ms / 1000u);
 
         usleep(DFU_POLL_INTERVAL_MS * 1000u);
-        elapsed_ms += DFU_POLL_INTERVAL_MS;   /* accumulate in ms — no truncation */
+        elapsed_ms += DFU_POLL_INTERVAL_MS;
     }
 
 #undef DFU_POLL_INTERVAL_MS
 }
 
+/*
+ * dfu_get_info – return a heap-allocated string for the given device key.
+ * Caller must free().  Returns NULL on error.
+ */
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * dfu_reset_reconnect – issue irecv_reset, close, wait for re-enumeration.
- *
- * BUG FIX: the original silently skipped the reset when dfu_open_client()
- * failed (client was NULL) and then called dfu_wait_ready() regardless.
- * The reset is now best-effort (logged as a warning on failure) but the
- * function still proceeds to poll for re-enumeration either way, matching
- * the intent of all call sites.
- * ═══════════════════════════════════════════════════════════════════════════ */
-static int dfu_reset_reconnect(const char *context)
+/* Dispatch table entry for dfu_get_info. */
+typedef struct {
+    const char *key;
+    char *(*extract)(const struct irecv_device_info *devinfo,
+                     irecv_device_t device);
+} dfu_info_entry_t;
+
+static char *extract_ecid(const struct irecv_device_info *d, irecv_device_t _)
 {
-    log_info("Resetting device connection after %s...", context);
-
-    irecv_client_t client = dfu_open_client();
-    if (client) {
-        irecv_reset(client);
-        irecv_close(client);
-    } else {
-        log_warn("dfu_reset_reconnect: could not open client for reset "
-                 "after %s — proceeding to poll anyway\n", context);
-    }
-
-    usleep(1000);
-
-    return dfu_wait_ready(10, context);
+    (void)_;
+    return dup_printf("0x%016llX", (unsigned long long)d->ecid);
+}
+static char *extract_cpid(const struct irecv_device_info *d, irecv_device_t _)
+{
+    (void)_;
+    return dup_printf("0x%04X", d->cpid);
+}
+static char *extract_product_type(const struct irecv_device_info *_, irecv_device_t dev)
+{
+    (void)_;
+    return (dev && dev->product_type) ? strdup(dev->product_type) : NULL;
+}
+static char *extract_model(const struct irecv_device_info *_, irecv_device_t dev)
+{
+    (void)_;
+    return (dev && dev->hardware_model) ? strdup(dev->hardware_model) : NULL;
 }
 
-/*
- * dfu_get_info – return a heap-allocated string for the given key.
- * Caller must free().  Returns NULL on error.
- *
- * Recognised keys:  "ecid"  "cpid"  "product_type"  "model"
- */
-char *dfu_get_info(const char *key)
-{
-    log_debug("Getting device info: %s\n", key);
+static const dfu_info_entry_t k_info_table[] = {
+    { "ecid",         extract_ecid         },
+    { "cpid",         extract_cpid         },
+    { "product_type", extract_product_type },
+    { "model",        extract_model        },
+    { NULL, NULL }
+};
 
-    irecv_client_t client = dfu_open_client();
-    if (!client) {
-        log_error("dfu_get_info: could not open client\n");
-        return NULL;
-    }
+/* Callback context for the get-info operation. */
+typedef struct {
+    const char *key;
+    char       *result; /* heap-allocated, caller frees */
+} get_info_ctx_t;
+
+static int cb_get_info(irecv_client_t client, void *opaque)
+{
+    get_info_ctx_t *ctx = opaque;
 
     const struct irecv_device_info *devinfo = irecv_get_device_info(client);
     irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
 
-    char   *info      = NULL;
-
-    if (!strcmp(key, "ecid")) {
-         info = dup_printf("0x%016llX", (unsigned long long)devinfo->ecid);
-    } else if (!strcmp(key, "cpid")) {
-         info = dup_printf("0x%04X", devinfo->cpid);
-    } else if (!strcmp(key, "product_type")) {
-        if (device && device->product_type)
-            info = strdup(device->product_type);
-    } else if (!strcmp(key, "model")) {
-        if (device && device->hardware_model)
-            info = strdup(device->hardware_model);
+    for (int i = 0; k_info_table[i].key; i++) {
+        if (strcmp(k_info_table[i].key, ctx->key) == 0) {
+            ctx->result = k_info_table[i].extract(devinfo, device);
+            return (ctx->result) ? 0 : -1;
+        }
     }
 
-    irecv_close(client);
+    log_error("dfu_get_info: unknown key '%s'\n", ctx->key);
+    return -1;
+}
 
-    return info;
+char *dfu_get_info(const char *key)
+{
+    log_debug("Getting device info: %s\n", key);
+    get_info_ctx_t ctx = { .key = key, .result = NULL };
+    dfu_with_client(cb_get_info, &ctx);
+    return ctx.result;
+}
+
+/* Callback context for send_file. */
+typedef struct { const char *filepath; } send_file_ctx_t;
+
+static int cb_send_file(irecv_client_t client, void *opaque)
+{
+    const send_file_ctx_t *ctx = opaque;
+    irecv_event_subscribe(client, IRECV_PROGRESS, &dfu_progress_cb, NULL);
+    irecv_error_t err = irecv_send_file(client, ctx->filepath, 0);
+    return (err == IRECV_E_SUCCESS) ? 0 : -1;
 }
 
 int dfu_send_file(const char *filepath)
 {
-    irecv_client_t client = dfu_open_client();
-    if (!client) return -1;
+    send_file_ctx_t ctx = { filepath };
+    return dfu_with_client(cb_send_file, &ctx);
+}
 
-    irecv_event_subscribe(client, IRECV_PROGRESS, &dfu_progress_cb, NULL);
-    irecv_error_t err = irecv_send_file(client, filepath, 0);
-    irecv_close(client);
+/* Callback context for send_cmd. */
+typedef struct { const char *command; } send_cmd_ctx_t;
+
+static int cb_send_cmd(irecv_client_t client, void *opaque)
+{
+    const send_cmd_ctx_t *ctx = opaque;
+    irecv_error_t err = irecv_send_command(client, ctx->command);
     return (err == IRECV_E_SUCCESS) ? 0 : -1;
 }
 
 int dfu_send_cmd(const char *command)
 {
-    irecv_client_t client = dfu_open_client();
-    if (!client) return -1;
-
-    irecv_error_t err = irecv_send_command(client, command);
-    irecv_close(client);
-    return (err == IRECV_E_SUCCESS) ? 0 : -1;
+    send_cmd_ctx_t ctx = { command };
+    return dfu_with_client(cb_send_cmd, &ctx);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
