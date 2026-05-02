@@ -1898,6 +1898,13 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: gastera1n_reset failed\n");
         return -1;
     }
+
+    /* Wait for the device to re-enumerate after gastera1n_reset(). */
+    if (dfu_wait_ready(2, "gastera1n_reset") != 0) {
+        log_error("stage_boot_ramdisk: device did not re-enumerate "
+                  "after reset\n");
+        return -1;
+    }
     
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
