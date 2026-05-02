@@ -859,6 +859,25 @@ int dfu_send_cmd(const char *command)
     return (err == IRECV_E_SUCCESS) ? 0 : -1;
 }
 
+/*
+ * dfu_wait_ready – sleep then verify the DFU client is reachable.
+ *
+ * Used after iBSS/iBEC sends to absorb USB re-enumeration delay.
+ * Returns 0 if the device responds within the timeout, -1 otherwise.
+ */
+static int dfu_wait_ready(unsigned int delay_secs, const char *context)
+{
+    sleep(delay_secs);
+
+    /* Probe: open and immediately close a client to confirm reachability. */
+    irecv_client_t client = dfu_open_client();
+    if (!client) {
+        log_error("dfu_wait_ready: device not reachable after %s\n", context);
+        return -1;
+    }
+    irecv_close(client);
+    return 0;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * SHSH / IM4M helpers
@@ -1657,41 +1676,86 @@ static int stage_patch(rdsk_ctx_t *ctx)
  * Stage: boot
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+/*
+ * send_payload – send an img4 file and immediately issue the commit command.
+ *
+ * This helper makes the send→commit pairing explicit and ensures both steps
+ * are logged consistently.  Returns 0 on success, -1 on failure.
+ */
+static int send_payload(const char *label,
+                        const char *filepath,
+                        const char *commit_cmd)
+{
+    log_info("Sending %s...", label);
+    if (dfu_send_file(filepath) != 0) {
+        log_error("stage_boot_ramdisk: failed to send %s ('%s')\n",
+                  label, filepath);
+        return -1;
+    }
+    if (dfu_send_cmd(commit_cmd) != 0) {
+        log_error("stage_boot_ramdisk: commit command '%s' failed "
+                  "after sending %s\n", commit_cmd, label);
+        return -1;
+    }
+    return 0;
+}
+
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
+
     log_info("Waiting for DFU device...");
     if (dfu_wait_for_device() != 0) return -1;
 
     log_info("Booting SSH ramdisk...");
-    if (gastera1n_reset() != 0) return -1;
+
+    if (gastera1n_reset() != 0) {
+        log_error("stage_boot_ramdisk: gastera1n_reset failed\n");
+        return -1;
+    }
     sleep(SLEEP_AFTER_RESET);
 
-    if (dfu_send_file(ctx->ibss_img4)    != 0) return -1;
-    sleep(SLEEP_IBSS_AFTER_SEND);
+    /* ── iBSS ─────────────────────────────────────────────────────────── */
+    log_info("Sending iBSS...");
+    if (dfu_send_file(ctx->ibss_img4) != 0) {
+        log_error("stage_boot_ramdisk: failed to send iBSS ('%s')\n",
+                  ctx->ibss_img4);
+        return -1;
+    }
+    if (dfu_wait_ready(SLEEP_IBSS_AFTER_SEND, "iBSS send") != 0)
+        return -1;
 
-    if (dfu_send_file(ctx->ibec_img4)    != 0) return -1;
-    sleep(SLEEP_IBEC_AFTER_SEND);
+    /* ── iBEC ─────────────────────────────────────────────────────────── */
+    log_info("Sending iBEC...");
+    if (dfu_send_file(ctx->ibec_img4) != 0) {
+        log_error("stage_boot_ramdisk: failed to send iBEC ('%s')\n",
+                  ctx->ibec_img4);
+        return -1;
+    }
+    if (dfu_wait_ready(SLEEP_IBEC_AFTER_SEND, "iBEC send") != 0)
+        return -1;
 
-    if (dfu_send_cmd("go")               != 0) return -1;
+    if (dfu_send_cmd("go") != 0) {
+        log_error("stage_boot_ramdisk: 'go' command failed\n");
+        return -1;
+    }
     sleep(SLEEP_AFTER_GO);
 
-    if (dfu_send_file(ctx->bootim_img4)  != 0) return -1;
-    if (dfu_send_cmd("setpicture 0x1")   != 0) return -1;
-    if (dfu_send_cmd("bgcolor 255 55 55")!= 0) return -1;
+    /* ── Boot image (cosmetic — non-fatal on failure) ─────────────────── */
+    log_info("Setting boot image...");
+    if (dfu_send_file(ctx->bootim_img4) != 0)
+        log_warning("stage_boot_ramdisk: boot image send failed (non-fatal)\n");
+    
+    if (dfu_send_cmd("setpicture 0x1") != 0 ||
+             dfu_send_cmd("bgcolor 255 55 55") != 0)
+        log_warning("stage_boot_ramdisk: boot image commands failed (non-fatal)\n");
 
-    if (dfu_send_file(ctx->devicetree_img4) != 0) return -1;
-    if (dfu_send_cmd("devicetree")          != 0) return -1;
+    /* ── Device tree, ramdisk, trustcache, kernel ────────────────────── */
+    if (send_payload("device tree",  ctx->devicetree_img4,  "devicetree") != 0) return -1;
+    if (send_payload("ramdisk",      ctx->ramdisk_img4,     "ramdisk")    != 0) return -1;
+    if (send_payload("trustcache",  ctx->trustcache_img4,  "firmware")   != 0) return -1;
+    if (send_payload("kernelcache",  ctx->kernelcache_img4, "bootx")      != 0) return -1;
 
-    if (dfu_send_file(ctx->ramdisk_img4) != 0) return -1;
-    if (dfu_send_cmd("ramdisk")          != 0) return -1;
-
-    if (dfu_send_file(ctx->trustcache_img4) != 0) return -1;
-    if (dfu_send_cmd("firmware")            != 0) return -1;
-
-    if (dfu_send_file(ctx->kernelcache_img4) != 0) return -1;
-    if (dfu_send_cmd("bootx")               != 0) return -1;
-
-    log_info("Device should be booting now.");
+    log_info("Boot sequence complete — device is starting up.");
     return 0;
 }
 
