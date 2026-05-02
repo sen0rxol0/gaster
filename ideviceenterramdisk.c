@@ -58,21 +58,8 @@
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * Sleep constants for the boot sequence
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-/* Seconds to sleep between the first and second iBEC sends. */
-#define SLEEP_IBEC_BETWEEN_SENDS  3u
-/* Seconds to sleep after the second iBEC send (before 'go'). */
-#define SLEEP_IBEC_BEFORE_GO      1u
-/* Seconds to sleep after the 'go' command. */
-#define SLEEP_AFTER_GO_CMD        1u
-
-/* Give iBSS/iBEC up to 4 seconds to re-enumerate — plenty for slow hardware. */
-//#define SLEEP_IBSS_AFTER_SEND  4u
-//#define SLEEP_IBEC_AFTER_SEND  4u
-//#define SLEEP_AFTER_GO        5
+#define SLEEP_IBSS_AFTER_SEND  4u
+#define SLEEP_AFTER_GO        5
 
 /* Reset recovery before boot. */
 #define SLEEP_AFTER_RESET     2
@@ -1825,17 +1812,6 @@ static int send_payload(const char *label,
     return 0;
 }
 
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Chipset predicates
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-/* iBEC must be sent twice, followed by an explicit 'go'. */
-static bool needs_double_ibec(uint32_t cpid)
-{
-    return cpid == 0x8010 || cpid == 0x8011 || cpid == 0x8015;
-}
-
 /* Device requires reset + resend after the first iBSS transfer. */
 static bool needs_ibss_reset(uint32_t cpid)
 {
@@ -1882,7 +1858,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     log_info("Sending iBSS...");
     int ret = dfu_send_file(ctx->ibss_img4);
 
-    if (ret == 1 || needs_ibss_reset(cpid)) {
+    /*if (ret == 1 || needs_ibss_reset(cpid)) {
         log_info("iBSS retry required (cpid=0x%04X, ret=%d) — "
                  "resetting and resending...", cpid, ret);
 
@@ -1899,7 +1875,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     } else if (ret != 0) {
         log_error("stage_boot_ramdisk: iBSS send failed (ret=%d)\n", ret);
         return -1;
-    }
+    }*/
 
     /*
      * Confirm iBSS executed by waiting for the recovery mode transition.
@@ -1918,22 +1894,11 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: iBEC send failed\n");
         return -1;
     }
-    sleep(SLEEP_IBEC_BETWEEN_SENDS);
 
-    if (needs_double_ibec(cpid)) {
-        log_info("Sending iBEC second time (cpid=0x%04X)...", cpid);
-        if (dfu_send_file(ctx->ibec_img4) != 0) {
-            log_error("stage_boot_ramdisk: iBEC second send failed\n");
-            return -1;
-        }
-        sleep(SLEEP_IBEC_BEFORE_GO);
-
-        log_info("Sending go command...");
-        if (dfu_send_cmd("go") != 0) {
-            log_error("stage_boot_ramdisk: 'go' command failed\n");
-            return -1;
-        }
-        sleep(SLEEP_AFTER_GO_CMD);
+    log_info("Sending go command...");
+    if (dfu_send_cmd("go") != 0) {
+        log_error("stage_boot_ramdisk: 'go' command failed\n");
+        return -1;
     }
 
     sleep(SLEEP_AFTER_GO);
