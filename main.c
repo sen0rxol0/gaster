@@ -55,7 +55,6 @@ int main(int argc, char **argv)
     puts("//\thttps://github.com/1Conan/tsschecker");
     puts("");
 
-    DEBUG_ENABLED  = false;
     ramdiskBootMode = false;
     pwnDFUMode      = false;
 
