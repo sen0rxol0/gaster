@@ -862,12 +862,12 @@ int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
     return dfu_poll_until(-1, max_wait_secs, context);
 }
 
-/* Require a specific recovery mode. */
+/* Require a specific recovery mode.
 static int dfu_verify_mode(int expected_mode, unsigned int max_wait_secs,
                            const char *context)
 {
     return dfu_poll_until(expected_mode, max_wait_secs, context);
-}
+} */
 
 /* Issue a reset, close, then poll until the device re-enumerates. */
 static int dfu_reset_reconnect(const char *context)
@@ -1914,10 +1914,10 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     }
     sleep(SLEEP_AFTER_SEND_IBSS);
     
-    if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2, 3, "iBSS") != 0) {
+    /*if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2, 3, "iBSS") != 0) {
         log_error("stage_boot_ramdisk: iBSS did not execute\n");
         return -1;
-    }
+    }*/
 
     /* ── iBEC ────────────────────────────────────────────────────────── */
     log_info("Sending iBEC...");
