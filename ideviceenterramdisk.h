@@ -11,7 +11,7 @@
  *
  * Value is set in main.c.
  */
-bool ramdiskBootMode;
+extern bool ramdiskBootMode;
 
 /*
  * ideviceenterramdisk_set_tool_dir – set the directory containing the
