@@ -1858,7 +1858,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     log_info("Sending iBSS...");
     int ret = dfu_send_file(ctx->ibss_img4);
 
-    /*if (ret == 1 || needs_ibss_reset(cpid)) {
+    if (ret != 0 || needs_ibss_reset(cpid)) {
         log_info("iBSS retry required (cpid=0x%04X, ret=%d) — "
                  "resetting and resending...", cpid, ret);
 
@@ -1872,10 +1872,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
             log_error("stage_boot_ramdisk: iBSS retry failed (ret=%d)\n", ret);
             return -1;
         }
-    } else if (ret != 0) {
-        log_error("stage_boot_ramdisk: iBSS send failed (ret=%d)\n", ret);
-        return -1;
-    }*/
+    }
 
     /*
      * Confirm iBSS executed by waiting for the recovery mode transition.
