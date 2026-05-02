@@ -58,9 +58,9 @@
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
-/* Seconds between DFU send steps to let iBSS/iBEC negotiate. */
-#define SLEEP_IBSS_AFTER_SEND 1
-#define SLEEP_IBEC_AFTER_SEND 1
+/* Give iBSS/iBEC up to 4 seconds to re-enumerate — plenty for slow hardware. */
+#define SLEEP_IBSS_AFTER_SEND  4u
+#define SLEEP_IBEC_AFTER_SEND  4u
 #define SLEEP_AFTER_GO        5
 /* Reset recovery before boot. */
 #define SLEEP_AFTER_RESET     2
@@ -860,23 +860,44 @@ int dfu_send_cmd(const char *command)
 }
 
 /*
- * dfu_wait_ready – sleep then verify the DFU client is reachable.
+ * dfu_wait_ready – wait for the DFU device to re-enumerate after a send.
  *
- * Used after iBSS/iBEC sends to absorb USB re-enumeration delay.
- * Returns 0 if the device responds within the timeout, -1 otherwise.
+ * After iBSS/iBEC is accepted the device resets and briefly disappears from
+ * USB.  A single sleep is not reliable — we instead poll dfu_open_client()
+ * with a short interval for up to max_wait_secs seconds.
+ *
+ * context is a short label used in error messages only.
+ * Returns 0 when the device is reachable, -1 on timeout.
  */
-static int dfu_wait_ready(unsigned int delay_secs, const char *context)
+int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
 {
-    sleep(delay_secs);
+#define POLL_INTERVAL_US  250000u   /* 250 ms between probes */
+    unsigned int elapsed_ms = 0;
+    unsigned int limit_ms   = max_wait_secs * 1000u;
 
-    /* Probe: open and immediately close a client to confirm reachability. */
-    irecv_client_t client = dfu_open_client();
-    if (!client) {
-        log_error("dfu_wait_ready: device not reachable after %s\n", context);
-        return -1;
+    log_info("Waiting for device after %s (up to %us)...", context, max_wait_secs);
+
+    /* Brief initial pause — give the device time to drop off USB before
+     * we start polling, so we don't mistake the old handle for a ready state. */
+    usleep(500000);   /* 500 ms */
+
+    while (elapsed_ms < limit_ms) {
+        irecv_client_t client = dfu_open_client();
+        if (client) {
+            irecv_close(client);
+            log_info("Device ready after %s (%u ms).",
+                     context, elapsed_ms + 500u);
+            return 0;
+        }
+        usleep(POLL_INTERVAL_US);
+        elapsed_ms += POLL_INTERVAL_US / 1000u;
     }
-    irecv_close(client);
-    return 0;
+
+    log_error("dfu_wait_ready: device did not re-enumerate within %us "
+              "after %s\n", max_wait_secs, context);
+    return -1;
+
+#undef POLL_INTERVAL_US
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
