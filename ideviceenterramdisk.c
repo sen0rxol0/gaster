@@ -730,74 +730,83 @@ int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
  * DFU / irecovery helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+/*
+ * dfu_open_client – single attempt to open a DFU/recovery client.
+ *
+ * Returns a connected client on success, NULL if no device is present or
+ * the device is in an unusable mode.  Does NOT retry — callers that need
+ * retry logic implement their own loop (dfu_wait_for_device, dfu_wait_ready).
+ */
 static irecv_client_t dfu_open_client(void)
 {
     irecv_client_t client = NULL;
-    irecv_error_t err = IRECV_E_SUCCESS;
+    irecv_error_t  err    = irecv_open_with_ecid(&client, 0);
 
-    for (int i = 0; i <= 5; i++) {
-        log_debug("Attempting to connect to DFU device...\n");
-        err = irecv_open_with_ecid(&client, 0);
-
-        if (err == IRECV_E_UNSUPPORTED) {
-            log_error("irecv: %s\n", irecv_strerror(err));
-            return NULL;
-        }
-        if (err == IRECV_E_SUCCESS) {
-            /* Verify we're in a mode that exposes device info.
-               DFU and all recovery modes are acceptable; WTF mode is not. */
-            int mode = 0;
-            irecv_get_mode(client, &mode);
-            if (mode == IRECV_K_DFU_MODE          ||
-                mode == IRECV_K_RECOVERY_MODE_1   ||
-                mode == IRECV_K_RECOVERY_MODE_2   ||
-                mode == IRECV_K_RECOVERY_MODE_3   ||
-                mode == IRECV_K_RECOVERY_MODE_4) {
-                break;
-            }
-            /* Wrong mode — close and retry. */
-            log_debug("irecv: unexpected mode 0x%04X, retrying...\n", mode);
-            irecv_close(client);
-            client = NULL;
-            err = IRECV_E_NO_DEVICE;
-        }
-
-        sleep(1);
-
-        if (i == 5) {
-            log_error("irecv: %s\n", irecv_strerror(err));
-            return NULL;
-        }
+    if (err == IRECV_E_UNSUPPORTED) {
+        log_error("irecv: %s\n", irecv_strerror(err));
+        return NULL;
     }
-    return client;
+    if (err != IRECV_E_SUCCESS)
+        return NULL;
+
+    int mode = 0;
+    irecv_get_mode(client, &mode);
+
+    if (mode == IRECV_K_DFU_MODE        ||
+        mode == IRECV_K_RECOVERY_MODE_1 ||
+        mode == IRECV_K_RECOVERY_MODE_2 ||
+        mode == IRECV_K_RECOVERY_MODE_3 ||
+        mode == IRECV_K_RECOVERY_MODE_4)
+        return client;
+
+    log_debug("dfu_open_client: unexpected mode 0x%04X\n", mode);
+    irecv_close(client);
+    return NULL;
 }
+
+/*
+ * dfu_wait_for_device – poll until a DFU/recovery device appears, with a
+ * printed countdown so the user knows the tool is still waiting.
+ *
+ * Polls every POLL_INTERVAL_MS milliseconds with no hard timeout — the
+ * user is expected to put the device in DFU mode manually and the tool
+ * should wait as long as needed.  Ctrl-C aborts.
+ */
+#define DFU_POLL_INTERVAL_MS  500u
 
 int dfu_wait_for_device(void)
 {
-    log_info("Searching for DFU mode device...");
+    log_info("Searching for DFU mode device — put device in DFU now...");
 
-    irecv_client_t client = dfu_open_client();
-    if (!client) return -1;
+    unsigned int waited_s = 0;
 
-    irecv_device_t device = NULL;
-    irecv_devices_get_device_by_client(client, &device);
+    for (;;) {
+        irecv_client_t client = dfu_open_client();
+        if (client) {
+            /* Configure auto-boot and persist it. */
+            irecv_error_t err = irecv_setenv(client, "auto-boot", "true");
+            if (err != IRECV_E_SUCCESS)
+                log_error("irecv_setenv: %s\n", irecv_strerror(err));
 
-    if (!device) {
-        irecv_close(client);
-        return -1;
+            err = irecv_saveenv(client);
+            if (err != IRECV_E_SUCCESS)
+                log_error("irecv_saveenv: %s\n", irecv_strerror(err));
+
+            irecv_close(client);
+            log_info("DFU device found after %us.", waited_s);
+            return 0;
+        }
+
+        /* Print a waiting indicator every 5 seconds. */
+        if (waited_s % 5 == 0)
+            log_info("Still waiting for DFU device... (%us elapsed)", waited_s);
+
+        usleep(DFU_POLL_INTERVAL_MS * 1000u);
+        waited_s += DFU_POLL_INTERVAL_MS / 1000u;
     }
-
-    irecv_error_t err = irecv_setenv(client, "auto-boot", "true");
-    if (err != IRECV_E_SUCCESS)
-        log_error("irecv_setenv: %s\n", irecv_strerror(err));
-
-    err = irecv_saveenv(client);
-    if (err != IRECV_E_SUCCESS)
-        log_error("irecv_saveenv: %s\n", irecv_strerror(err));
-
-    irecv_close(client);
-    return 0;
 }
+
+#undef DFU_POLL_INTERVAL_MS
 
 /*
  * dfu_get_info – return a heap-allocated string for the given key.
