@@ -1752,11 +1752,11 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     /* ── Boot image (cosmetic — non-fatal on failure) ─────────────────── */
     log_info("Setting boot image...");
     if (dfu_send_file(ctx->bootim_img4) != 0)
-        log_warning("stage_boot_ramdisk: boot image send failed (non-fatal)\n");
+        log_debug("stage_boot_ramdisk: boot image send failed (non-fatal)\n");
     
     if (dfu_send_cmd("setpicture 0x1") != 0 ||
              dfu_send_cmd("bgcolor 255 55 55") != 0)
-        log_warning("stage_boot_ramdisk: boot image commands failed (non-fatal)\n");
+        log_debug("stage_boot_ramdisk: boot image commands failed (non-fatal)\n");
 
     /* ── Device tree, ramdisk, trustcache, kernel ────────────────────── */
     if (send_payload("device tree",  ctx->devicetree_img4,  "devicetree") != 0) return -1;
