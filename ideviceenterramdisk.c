@@ -1948,10 +1948,10 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
     
-    if (dfu_reset_reconnect("iBEC") != 0) {
+    /*if (dfu_reset_reconnect("iBEC") != 0) {
         log_error("stage_boot_ramdisk: device lost after iBEC\n");
         return -1;
-    }
+    }*/
 
     /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
