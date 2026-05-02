@@ -1658,6 +1658,9 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     if (shell_cmd("rsync -auK '%s/sshd/' '%s/'", ctx->mount, ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: rsync of sshd tree failed");
+
+    if (patch_restored_external_in_ramdisk(ctx) != 0)
+        RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
     
     if (shell_cmd(
             "for d in"
@@ -1670,8 +1673,6 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
             ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: chmod on merged binary dirs failed");
 
-    
-
     if (shell_cmd(
             "cd '%s' && rm -rf "
             "./sshd "
@@ -1681,9 +1682,6 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
             "./etc/dpkg",
             ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: cleanup pass failed");
-
-    if (patch_restored_external_in_ramdisk(ctx) != 0)
-        RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
 
 detach:
 
