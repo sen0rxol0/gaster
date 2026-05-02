@@ -1911,17 +1911,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    if (dfu_wait_ready(SLEEP_AFTER_SEND_IBSS, "iBSS") != 0) {
-        log_info("Device did not reconnect after iBSS — retrying send...");
-        if (dfu_send_file(ctx->ibss_img4) != 0) {
-            log_error("stage_boot_ramdisk: iBSS retry send failed\n");
-            return -1;
-        }
-        if (dfu_wait_ready(SLEEP_AFTER_SEND_IBSS, "iBSS retry") != 0) {
-            log_error("stage_boot_ramdisk: device did not reconnect after iBSS retry\n");
-            return -1;
-        }
-    }
+    sleep(SLEEP_AFTER_SEND_IBSS);
     
     /*if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2, 3, "iBSS") != 0) {
         log_error("stage_boot_ramdisk: iBSS did not execute\n");
@@ -1942,6 +1932,8 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
             return -1;
         }
     }
+
+    sleep(SLEEP_AFTER_SEND_IBEC);
     
     if (dfu_wait_ready(SLEEP_AFTER_SEND_IBEC, "iBEC") != 0) {
         log_error("stage_boot_ramdisk: device did not reconnect after iBEC\n");
