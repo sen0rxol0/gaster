@@ -9,9 +9,9 @@
  * prepare / download / patch pipeline and boots directly from the
  * per-device cache.  Set this before calling ideviceenterramdisk_load().
  *
- * Defined in ideviceenterramdisk.c.
+ * Value is set in main.c.
  */
-extern bool ramdiskBootMode;   /* FIX: declaration only — definition lives in .c */
+bool ramdiskBootMode;
 
 /*
  * ideviceenterramdisk_set_tool_dir – set the directory that contains the
