@@ -1400,14 +1400,27 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     log_info("Building ramdisk...");
 
     char ssh64_gz[PATH_MAX];
-    snprintf(ssh64_gz,   sizeof(ssh64_gz),   "%s/ssh64.tar.gz",   g_tool_dir);
+    snprintf(ssh64_gz, sizeof(ssh64_gz), "%s/ssh64.tar.gz", g_tool_dir);
 
-    if (access(ssh64_gz, F_OK) != 0)
-        if (shell_cmd("cat %s/ssh64.tar.gz_* > '%s'", g_tool_dir, ssh64_gz) != 0)
+    /*
+     * FIX #1 (unquoted glob): g_tool_dir is now single-quoted in the shell
+     * command so paths containing spaces don't break glob expansion.
+     * Also validate the reassembled archive is non-empty before proceeding.
+     */
+    if (access(ssh64_gz, F_OK) != 0) {
+        if (shell_cmd("cat '%s'/ssh64.tar.gz_* > '%s'", g_tool_dir, ssh64_gz) != 0)
             return -1;
 
+        struct stat st;
+        if (stat(ssh64_gz, &st) != 0 || st.st_size == 0) {
+            log_error("stage_build_ramdisk: reassembled ssh64.tar.gz is missing or empty\n");
+            unlink(ssh64_gz);
+            return -1;
+        }
+    }
+
     char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
-    snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec", ctx->ramdisk);
+    snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec",     ctx->ramdisk);
     snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
 
     if (rename(rdsk_dec, rdsk_dmg) != 0) {
@@ -1422,54 +1435,90 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
                   rdsk_dmg, ctx->mount) != 0)
         return -1;
 
-    char mount_usr[PATH_MAX];
-    for (int i = 0; i < 5; i++) {
-        snprintf(mount_usr, sizeof(mount_usr), "%s/usr", ctx->mount);
-        DIR *d = opendir(mount_usr);
-        if (d) {
-            struct dirent *ent = readdir(d);
-            if (ent) { closedir(d); break; }
-            closedir(d);
+    /*
+     * FIX #2 (mount readiness check): readdir() always returns "." first,
+     * so the old check never actually waited for real content.  Instead,
+     * poll until we can stat() a known path that must exist in a healthy
+     * ramdisk (/usr/local/bin), with an explicit timeout error on failure.
+     */
+    int mount_ready = 0;
+    for (int i = 0; i < 50; i++) {          /* up to ~5 s total */
+        char probe[PATH_MAX];
+        snprintf(probe, sizeof(probe), "%s/usr/local/bin", ctx->mount);
+        struct stat pst;
+        if (stat(probe, &pst) == 0 && S_ISDIR(pst.st_mode)) {
+            mount_ready = 1;
+            break;
         }
-        usleep(100000);
+        usleep(100000);                      /* 100 ms per poll */
     }
-    
-    /* All failure paths below must detach before returning. */
+    if (!mount_ready) {
+        log_error("stage_build_ramdisk: ramdisk mount timed out — "
+                  "'/usr/local/bin' never appeared under '%s'\n", ctx->mount);
+        shell_cmd("hdiutil detach -force '%s'", ctx->mount);
+        return -1;
+    }
+
     int ret = 0;
 
 #define RDSK_FAIL(msg, ...) \
     do { log_error(msg "\n", ##__VA_ARGS__); ret = -1; goto detach; } while (0)
 
- // This reduces the overhead of multiple shell_cmd calls and handles the 'cd' once
+    if (file_write_line(
+            dup_printf("%s/etc/motd", ctx->mount), "WELCOME BACK!") != 0)
+        RDSK_FAIL("stage_build_ramdisk: failed to write /etc/motd");
+
+    if (mkdir_p(dup_printf("%s/private/var/root", ctx->mount), 0755) != 0 ||
+        mkdir_p(dup_printf("%s/private/var/run",  ctx->mount), 0755) != 0 ||
+        mkdir_p(dup_printf("%s/sshd",             ctx->mount), 0755) != 0)
+        RDSK_FAIL("stage_build_ramdisk: failed to create required directories");
+
+    if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf '%s'",
+                  ctx->mount, ssh64_gz) != 0)
+        RDSK_FAIL("stage_build_ramdisk: tar extract of ssh64 failed");
+
+    if (shell_cmd("chmod -R 0755 '%s/sshd/bin' '%s/sshd/usr'",
+                  ctx->mount, ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: chmod on sshd tree failed");
+
+    if (shell_cmd("rsync -auK '%s/sshd/' '%s/'", ctx->mount, ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: rsync of sshd tree failed");
+
     if (shell_cmd(
-        "set -e; " // Exit immediately if any command fails
-        "printf 'WELCOME BACK!' > '%1$s/etc/motd'; "
-        "mkdir -p '%1$s/private/var/root' '%1$s/private/var/run' '%1$s/sshd'; "
-        "tar -C '%1$s/sshd' --preserve-permissions -xf '%2$s'; "
-        "chmod -R 0755 '%1$s/sshd/bin' '%1$s/sshd/usr'; "
-        "rsync -auK '%1$s/sshd/' '%1$s/'; "
-        "cd '%1$s' && rm -rf ./sshd ./usr/local/standalone/firmware/* ./usr/share/progressui ./etc/apt ./etc/dpkg",
-        ctx->mount, ssh64_gz
-    ) != 0 )
-        RDSK_FAIL("stage_build_ramdisk: inject SSHd into ramdisk failed");
+            "cd '%s' && rm -rf "
+            "./sshd "
+            "./usr/local/standalone/firmware/* "
+            "./usr/share/progressui "
+            "./etc/apt "
+            "./etc/dpkg",
+            ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: cleanup pass failed");
 
     if (patch_restored_external_in_ramdisk(ctx) != 0)
         RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
 
 detach:
-    
-    for (int i = 0; i < 3; i++) {
-        if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0)
-            break;
-        sleep(1);
+
+    {
+        int detached = 0;
+        for (int i = 0; i < 5; i++) {
+            if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) {
+                detached = 1;
+                break;
+            }
+            sleep(1);
+        }
+        if (!detached) {
+            log_error("stage_build_ramdisk: failed to detach '%s' after 5 attempts — "
+                      "image may be corrupt\n", ctx->mount);
+            return -1;   /* do NOT proceed to resize with a live mount */
+        }
     }
 
     if (ret != 0) return ret;
 
     if (shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging) != 0)
         return -1;
-
-    sleep(3);
 
 #undef RDSK_FAIL
     return 0;
