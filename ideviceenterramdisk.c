@@ -1406,11 +1406,13 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    if (rename(hax, dst_bin) != 0) {
-        log_error("patch_restored_external: rename failed: %s\n", strerror(errno));
+    if (file_copy(hax, dst_bin) != 0) {
+        log_error("patch_restored_external: failed to copy patched binary "
+                  "to ramdisk ('%s' → '%s')\n", hax, dst_bin);
         unlink(hax);
         return -1;
     }
+    unlink(hax);
     return 0;
 }
 
