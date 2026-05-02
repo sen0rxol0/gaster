@@ -15,8 +15,8 @@
 #include "gastera1n.h"
 
 
-extern bool ramdiskBootMode;
-bool pwnDFUMode;
+bool ramdiskBootMode = false;
+bool pwnDFUMode = false;
 bool DEBUG_ENABLED = false;
 
 int main(int argc, char **argv)
@@ -54,9 +54,6 @@ int main(int argc, char **argv)
     puts("//\thttps://github.com/realnp/ibootim");
     puts("//\thttps://github.com/1Conan/tsschecker");
     puts("");
-
-    ramdiskBootMode = false;
-    pwnDFUMode      = false;
 
     int opt;
     while ((opt = getopt(argc, argv, "htdp")) != -1) {
