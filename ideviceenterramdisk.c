@@ -1678,11 +1678,11 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
     struct {
         const char *in;
         const char *out;
-        const char *patch;   /* -P argument, or NULL */
+        const char *patch;   /* -P apply patch, or NULL */
         const char *type;    /* -T argument */
-        bool        apple;   /* pass -A flag */
+        bool        plain;   /* pass -A treat input as plain file flag */
     } steps[] = {
-        { ctx->kernelcache,       ctx->kernelcache_img4, NULL /* set below */, "rkrn", false },
+        { ctx->kernelcache,       ctx->kernelcache_img4, NULL /* set below */,  "rkrn", false },
         { ctx->trustcache,        ctx->trustcache_img4,  NULL,                  "rtsc", false },
         { NULL /* rdsk, set below */, ctx->ramdisk_img4, NULL,                  "rdsk", true  },
         { ctx->devicetree,        ctx->devicetree_img4,  NULL,                  "rdtr", false },
@@ -1710,24 +1710,16 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
     for (size_t i = 0; i < sizeof(steps)/sizeof(steps[0]); i++) {
         int r;
         if (steps[i].patch) {
-            r = steps[i].apple
-                ? exec_tool(img4_bin,
-                            "-i", steps[i].in,
-                            "-o", steps[i].out,
-                            "-P", steps[i].patch,
-                            "-M", ctx->im4m,
-                            "-A",
-                            "-T", steps[i].type,
-                            NULL)
-                : exec_tool(img4_bin,
+            r =  exec_tool(img4_bin,
                             "-i", steps[i].in,
                             "-o", steps[i].out,
                             "-P", steps[i].patch,
                             "-M", ctx->im4m,
                             "-T", steps[i].type,
+                            "-J",
                             NULL);
         } else {
-            r = steps[i].apple
+            r = steps[i].plain
                 ? exec_tool(img4_bin,
                             "-i", steps[i].in,
                             "-o", steps[i].out,
