@@ -1884,11 +1884,6 @@ static bool needs_trust_cache_send(uint32_t cpid)
  * ═══════════════════════════════════════════════════════════════════════════ */
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
-    if (gastera1n_reset() != 0) {
-        log_error("stage_boot_ramdisk: gastera1n_reset failed\n");
-        return -1;
-    }
-
     char *cpid_str = dfu_get_info("cpid");
     if (!cpid_str) {
         log_error("stage_boot_ramdisk: could not read cpid\n");
@@ -1899,6 +1894,11 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 
     log_info("Booting SSH ramdisk (cpid=0x%04X)...", cpid);
 
+    if (gastera1n_reset() != 0) {
+        log_error("stage_boot_ramdisk: gastera1n_reset failed\n");
+        return -1;
+    }
+    
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
     if (dfu_send_file(ctx->ibss_img4) != 0) {        // check the return
