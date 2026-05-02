@@ -44,6 +44,15 @@ int ideviceenterramdisk_load(void);
 int dfu_wait_for_device(void);
 
 /*
+ * dfu_wait_ready – sleep for delay_secs then verify the DFU client is
+ * reachable.  Used after iBSS/iBEC sends to absorb USB re-enumeration
+ * delay.  context is a short label used in error messages.
+ *
+ * Returns 0 if the device responds, -1 on timeout / connection failure.
+ */
+int dfu_wait_ready(unsigned int max_wait_secs, const char *context);
+
+/*
  * dfu_get_info – query a named property from the connected DFU device.
  *
  * Recognised keys: "ecid", "cpid", "product_type", "model"
@@ -64,15 +73,6 @@ int dfu_send_file(const char *filepath);
  * Returns 0 on success, -1 on error.
  */
 int dfu_send_cmd(const char *command);
-
-/*
- * dfu_wait_ready – sleep for delay_secs then verify the DFU client is
- * reachable.  Used after iBSS/iBEC sends to absorb USB re-enumeration
- * delay.  context is a short label used in error messages.
- *
- * Returns 0 if the device responds, -1 on timeout / connection failure.
- */
-int dfu_wait_ready(unsigned int delay_secs, const char *context);
 
 /*
  * dfu_progress_cb – irecovery IRECV_PROGRESS event callback.
