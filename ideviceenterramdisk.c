@@ -58,9 +58,12 @@
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
-#define SLEEP_AFTER_SEND_IBSS  2
-#define SLEEP_AFTER_SEND_IBEC  3
-#define DFU_RECONNECT_TIMEOUT_SECS 5u
+/* Delays passed to dfu_wait_ready (milliseconds). */
+#define IBSS_INITIAL_DELAY_MS   2000u
+#define IBEC_INITIAL_DELAY_MS   3000u
+
+/* Reconnect poll budget (seconds). */
+#define DFU_RECONNECT_TIMEOUT_SECS   5u
 
 /* Tool binary base-names. */
 #define TOOL_IMG4            "img4"
@@ -1857,7 +1860,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    if (dfu_wait_ready(SLEEP_AFTER_SEND_IBSS, DFU_RECONNECT_TIMEOUT_SECS, "iBSS send") != 0) {
+    if (dfu_wait_ready(IBSS_INITIAL_DELAY_MS, DFU_RECONNECT_TIMEOUT_SECS, "iBSS send") != 0) {
         log_error("stage_boot_ramdisk: device never re-appeared after iBSS\n");
         return -1;
     }
@@ -1876,7 +1879,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         }
     }
 
-    if (dfu_wait_ready(SLEEP_AFTER_SEND_IBEC, DFU_RECONNECT_TIMEOUT_SECS, "iBEC send") != 0) {
+    if (dfu_wait_ready(IBEC_INITIAL_DELAY_MS, DFU_RECONNECT_TIMEOUT_SECS, "iBEC send") != 0) {
         log_error("stage_boot_ramdisk: device did not reconnect after iBEC\n");
         return -1;
     }
