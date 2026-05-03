@@ -1867,16 +1867,6 @@ static bool needs_go_cmd(uint32_t cpid)
            cpid == 0x8011 || cpid == 0x8010;
 }
 
-/*
- * needs_trust_cache_send – extracted from the inline conditional that was
- * previously buried inside stage_boot_ramdisk, making it consistent with
- * the other two chipset predicates and easy to update.
- */
-static bool needs_trust_cache_send(uint32_t cpid)
-{
-    return cpid == 0x8015 || cpid == 0x8010 || cpid == 0x7000;
-}
-
 /* ═══════════════════════════════════════════════════════════════════════════
  * stage_boot_ramdisk
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -1939,10 +1929,8 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         return -1;
 
     /* ── Trust cache (chipset-conditional) ───────────────────────────── */
-    if (needs_trust_cache_send(cpid)) {
-        if (send_payload("trust cache", ctx->trustcache_img4, "firmware") != 0)
+    if (send_payload("trust cache", ctx->trustcache_img4, "firmware") != 0)
             return -1;
-    }
 
     /* ── Kernelcache ─────────────────────────────────────────────────── */
     if (send_payload("kernelcache", ctx->kernelcache_img4, "bootx") != 0)
