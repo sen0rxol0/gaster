@@ -1552,6 +1552,12 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
         unlink(hax);
         return -1;
     }
+
+    if (shell_cmd("chmod 0755 '%s'", dst_bin) != 0)  {
+        log_error("patch_restored_external: chmod restored_external failed\n");
+        return -1;
+    }
+    
     unlink(hax);
     return 0;
 }
