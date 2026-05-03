@@ -906,6 +906,7 @@ int dfu_wait_for_device(void)
     for (;;) {
         irecv_client_t client = dfu_open_client();
         if (client) {
+            /*
             irecv_error_t err = irecv_setenv(client, "auto-boot", "true");
             if (err != IRECV_E_SUCCESS)
                 log_error("irecv_setenv: %s\n", irecv_strerror(err));
@@ -913,7 +914,8 @@ int dfu_wait_for_device(void)
             err = irecv_saveenv(client);
             if (err != IRECV_E_SUCCESS)
                 log_error("irecv_saveenv: %s\n", irecv_strerror(err));
-
+            */
+            
             irecv_close(client);
             log_info("DFU device found after %us.", elapsed_ms / 1000u);
             return 0;
