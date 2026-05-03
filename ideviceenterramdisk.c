@@ -1519,8 +1519,10 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    if (shell_cmd("chmod 0755 '%s'", dst_bin) != 0)  {
-        log_error("patch_restored_external: chmod restored_external failed\n");
+    // chmod(2) directly — no shell, and works correctly under -owners off mounts
+    if (chmod(dst_bin, 0755) != 0) {
+        log_error("patch_restored_external: chmod dst_bin failed: %s\n", strerror(errno));
+        unlink(hax);
         return -1;
     }
     
