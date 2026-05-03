@@ -1576,20 +1576,27 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         }
     }
 
-    char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
+    char rdsk_dec[PATH_MAX], rdsk_tmp[PATH_MAX], rdsk_dmg[PATH_MAX];
     snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec",     ctx->ramdisk);
+    snprintf(rdsk_tmp, sizeof(rdsk_dmg), "%s/rdsk_tmp.dmg", ctx->staging);
     snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
 
-    if (rename(rdsk_dec, rdsk_dmg) != 0) {
+    if (rename(rdsk_dec, rdsk_tmp) != 0) {
         log_error("stage_build_ramdisk: failed to move ramdisk image\n");
         return -1;
     }
 
-    if (shell_cmd("hdiutil resize -size 208MB '%s'", rdsk_dmg) != 0)
+    if (shell_cmd("hdiutil resize -size 208MB '%s'", rdsk_tmp) != 0)
         return -1;
 
-    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s'",
-                  rdsk_dmg, ctx->mount) != 0)
+     /*
+     * Phase 1 – mount without ownership so no privilege is required.
+     * All file operations (tar, rsync, patch, chmod) run as the current user.
+     * On-disk uid/gid values written here don't matter because we rebuild
+     * the image from scratch in phase 2 with -copyuid root.
+     */
+    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s' -owners off",
+                  rdsk_tmp, ctx->mount) != 0)
         return -1;
 
     int mount_ready = 0;
@@ -1679,6 +1686,35 @@ detach:
 
     if (ret != 0) return ret;
 
+    /*
+     * Phase 2 – rebuild the image from the modified source folder.
+     *
+     * -copyuid root remaps all file ownership to root:wheel at image-
+     * creation time.  hdiutil create has the entitlements to do this
+     * without sudo.  The result is a fresh HFS+ image where every file
+     * is owned 0:0 on disk, which is what the device expects when it
+     * mounts the ramdisk.
+     *
+     * rdsk_dmg (the phase-1 working image) is no longer needed after
+     * this point and is removed to keep the staging directory tidy.
+     */
+    if (shell_cmd(
+            "hdiutil create"
+            " -size 208m"
+            " -imagekey diskimage-class=CRawDiskImage"
+            " -format UDZO"
+            " -fs HFS+"
+            " -layout NONE"
+            " -srcfolder '%s'"
+            " -copyuid root"
+            " '%s'",
+            ctx->mount, rdsk_dmg) != 0) {
+        log_error("stage_build_ramdisk: hdiutil create -copyuid root failed\n");
+        return -1;
+    }
+
+    unlink(rdsk_tmp);
+    
     if (shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging) != 0)
         return -1;
 
