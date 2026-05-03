@@ -780,7 +780,7 @@ static irecv_client_t dfu_open_client(void)
  *
  * Returns 0 when the condition is met, -1 on timeout.
  */
-#define POLL_INTERVAL_US 250000u   /* 250 ms */
+#define POLL_INTERVAL_US 500000u   /* 500 ms */
 
 static int dfu_poll_until(int expected_mode, unsigned int max_wait_secs,
                           const char *context)
@@ -792,7 +792,7 @@ static int dfu_poll_until(int expected_mode, unsigned int max_wait_secs,
         log_info("Waiting for device after %s (up to %us)...",
                  context, max_wait_secs);
 
-    usleep(500000); /* 500 ms: let the device drop off USB before first probe */
+    usleep(1000000); /* 1000 ms: let the device drop off USB before first probe */
 
     const unsigned int limit_ms = max_wait_secs * 1000u;
     unsigned int elapsed_ms = 0;
