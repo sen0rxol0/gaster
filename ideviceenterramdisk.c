@@ -858,9 +858,9 @@ static int dfu_with_client(dfu_client_cb_t cb, void *ctx)
 /* ─── Coordination helpers ────────────────────────────────────────────────── */
 
 /* Accept any valid DFU/recovery mode. */
-int dfu_wait_ready(const char *context)
+int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
 {
-    return dfu_poll_until(-1, DFU_RECONNECT_TIMEOUT_SECS, context);
+    return dfu_poll_until(-1, max_wait_secs, context);
 }
 
 
@@ -994,7 +994,7 @@ static int cb_send_file(irecv_client_t client, void *opaque)
 
 int dfu_send_file(const char *filepath)
 {
-    if (dfu_wait_ready("send file") != 0)
+    if (dfu_wait_ready(DFU_RECONNECT_TIMEOUT_SECS, "send file") != 0)
         return -1;
     
     send_file_ctx_t ctx = { filepath };
@@ -1013,7 +1013,7 @@ static int cb_send_cmd(irecv_client_t client, void *opaque)
 
 int dfu_send_cmd(const char *command)
 {
-    if (dfu_wait_ready("send command") != 0)
+    if (dfu_wait_ready(DFU_RECONNECT_TIMEOUT_SECS, "send command") != 0)
         return -1;
     
     send_cmd_ctx_t ctx = { command };
