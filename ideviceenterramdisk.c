@@ -1665,29 +1665,13 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     /* Ensure everything in the ramdisk is owned root:wheel (uid=0, gid=0). 
     if (shell_cmd("chown -Rh root:wheel '%s'", ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: chown root:wheel sweep failed");
-    */    
-detach:
+    */
 
-    if (ret != 0)  {
-         /* error path — just detach and bail */
-        for (int i = 0; i < 3; i++) {
-            if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) break;
-            sleep(1);
-        }
-        return -1;
-    }
-
-    /*
-     * Phase 2 – rebuild the image from the modified source folder.
-     *
-     * -copyuid root remaps all file ownership to root:wheel at image-
-     * creation time.  hdiutil create has the entitlements to do this
-     * without sudo.  The result is a fresh HFS+ image where every file
-     * is owned 0:0 on disk, which is what the device expects when it
-     * mounts the ramdisk.
-     *
-     * rdsk_tmp (the phase-1 working image) is no longer needed after
-     * this point and is removed to keep the staging directory tidy.
+   /*
+     * Phase 2 – while the volume is still mounted, rebuild as a new image
+     * with -copyuid root so all files land as root:wheel (0:0) on disk.
+     * hdiutil create has the entitlements to do this without sudo.
+     * Detach happens after capture so the mountpoint is still live here.
      */
     if (shell_cmd(
             "hdiutil create"
@@ -1699,19 +1683,22 @@ detach:
             " -srcfolder '%s'"
             " -copyuid root"
             " '%s'",
-            ctx->mount, rdsk_dmg) != 0) {
-        log_error("stage_build_ramdisk: hdiutil create -copyuid root failed\n");
+            ctx->mount, rdsk_dmg) != 0)
+        RDSK_FAIL("stage_build_ramdisk: hdiutil create -copyuid root failed");
+
+detach:
+    for (int i = 0; i < 3; i++) {
+        if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) break;
+        sleep(1);
+    }
+
+    if (ret != 0) {
+        unlink(rdsk_dmg);   /* remove partial output on failure */
         return -1;
     }
 
     unlink(rdsk_tmp);
 
-    /* Now safe to detach — image has been captured. */
-    for (int i = 0; i < 3; i++) {
-        if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) break;
-        sleep(1);
-    }
-    
     if (shell_cmd("hdiutil resize -sectors min '%s'", rdsk_dmg) != 0)
         return -1;
 
