@@ -1549,27 +1549,20 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         }
     }
 
-    char rdsk_dec[PATH_MAX], rdsk_tmp[PATH_MAX], rdsk_dmg[PATH_MAX];
+    char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
     snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec",     ctx->ramdisk);
-    snprintf(rdsk_tmp, sizeof(rdsk_tmp), "%s/rdsk_tmp.dmg", ctx->staging);
     snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
 
-    if (rename(rdsk_dec, rdsk_tmp) != 0) {
+    if (rename(rdsk_dec, rdsk_dmg) != 0) {
         log_error("stage_build_ramdisk: failed to move ramdisk image\n");
         return -1;
     }
 
-    if (shell_cmd("hdiutil resize -size 208MB '%s'", rdsk_tmp) != 0)
+    if (shell_cmd("hdiutil resize -size 208MB '%s'", rdsk_dmg) != 0)
         return -1;
 
-     /*
-     * Phase 1 – mount without ownership so no privilege is required.
-     * All file operations (tar, rsync, patch, chmod) run as the current user.
-     * On-disk uid/gid values written here don't matter because we rebuild
-     * the image from scratch in phase 2 with -copyuid root.
-     */
-    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s' -owners off",
-                  rdsk_tmp, ctx->mount) != 0)
+    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s'",
+                  rdsk_dmg, ctx->mount) != 0)
         return -1;
 
     int mount_ready = 0;
@@ -1640,25 +1633,6 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         RDSK_FAIL("stage_build_ramdisk: chown root:wheel sweep failed");
     */
 
-   /*
-     * Phase 2 – while the volume is still mounted, rebuild as a new image
-     * with -copyuid root so all files land as root:wheel (0:0) on disk.
-     * hdiutil create has the entitlements to do this without sudo.
-     * Detach happens after capture so the mountpoint is still live here.
-     */
-    if (shell_cmd(
-            "hdiutil create"
-            " -size 208m"
-            " -imagekey diskimage-class=CRawDiskImage"
-            " -format UDZO"
-            " -fs HFS+"
-            " -layout NONE"
-            " -srcfolder '%s'"
-            " -copyuid root"
-            " '%s'",
-            ctx->mount, rdsk_dmg) != 0)
-        RDSK_FAIL("stage_build_ramdisk: hdiutil create -copyuid root failed");
-
 detach:
     for (int i = 0; i < 3; i++) {
         if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) break;
@@ -1669,8 +1643,6 @@ detach:
         unlink(rdsk_dmg);   /* remove partial output on failure */
         return -1;
     }
-
-    unlink(rdsk_tmp);
 
     if (shell_cmd("hdiutil resize -sectors min '%s'", rdsk_dmg) != 0)
         return -1;
