@@ -863,18 +863,19 @@ int dfu_wait_for_device(void)
 }
 
 /*
- * dfu_wait_ready – wait for a device to re-enumerate after a send.
+ * dfu_wait_ready – wait for a device to re-enumerate.
  *
- * Applies a 1-second initial delay to let the device drop off USB before
+ * Applies a initial delay to let the device drop off USB before
  * the first probe, then polls up to timeout_secs seconds.
  *
  * Returns 0 on success, -1 on timeout.
  */
-int dfu_wait_ready(unsigned int timeout_secs, const char *context)
+int dfu_wait_ready(unsigned int initial_delay_ms,
+                   unsigned int timeout_secs,
+                   const char  *context)
 {
-    return dfu_poll(1000u, timeout_secs * 1000u, context);
+    return dfu_poll(initial_delay_ms, timeout_secs * 1000u, context);
 }
-
 /*
  * dfu_get_info – return a heap-allocated string for the given device key.
  * Caller must free().  Returns NULL on error.
@@ -961,10 +962,7 @@ static int cb_send_file(irecv_client_t client, void *opaque)
 }
 
 int dfu_send_file(const char *filepath)
-{
-    if (dfu_wait_ready(DFU_RECONNECT_TIMEOUT_SECS, "send file") != 0)
-        return -1;
-    
+{    
     send_file_ctx_t ctx = { filepath };
     return dfu_with_client(cb_send_file, &ctx);
 }
@@ -980,10 +978,7 @@ static int cb_send_cmd(irecv_client_t client, void *opaque)
 }
 
 int dfu_send_cmd(const char *command)
-{
-    if (dfu_wait_ready(DFU_RECONNECT_TIMEOUT_SECS, "send command") != 0)
-        return -1;
-    
+{    
     send_cmd_ctx_t ctx = { command };
     return dfu_with_client(cb_send_cmd, &ctx);
 }
@@ -1861,8 +1856,11 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: iBSS send failed\n");
         return -1;
     }
-    sleep(SLEEP_AFTER_SEND_IBSS);
 
+    if (dfu_wait_ready(SLEEP_AFTER_SEND_IBSS, DFU_RECONNECT_TIMEOUT_SECS, "iBSS send") != 0) {
+        log_error("stage_boot_ramdisk: device never re-appeared after iBSS\n");
+        return -1;
+    }
     /* ── iBEC ────────────────────────────────────────────────────────── */
     log_info("Sending iBEC...");
     if (dfu_send_file(ctx->ibec_img4) != 0) {
@@ -1878,7 +1876,10 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         }
     }
 
-    sleep(SLEEP_AFTER_SEND_IBEC);
+    if (dfu_wait_ready(SLEEP_AFTER_SEND_IBEC, DFU_RECONNECT_TIMEOUT_SECS, "iBEC send") != 0) {
+        log_error("stage_boot_ramdisk: device did not reconnect after iBEC\n");
+        return -1;
+    }
     
     /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
