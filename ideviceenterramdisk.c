@@ -1460,8 +1460,7 @@ static int patch_iboot(const char *path, bool is_ibec)
     snprintf(out, sizeof(out), "%s.pwn", path);
 
     if (is_ibec) {
-        /* Each flag is a separate argument — never pack them into one string. */
-        return exec_tool(iboot_bin, in, out, "-n", "-b", "rd=md0 -v", NULL);
+        return exec_tool(iboot_bin, in, out, "-n", "-b", "rd=md0 debug=0x2014e -v wdt=-1", NULL);
     } else {
         return exec_tool(iboot_bin, in, out, NULL);
     }
