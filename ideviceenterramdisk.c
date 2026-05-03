@@ -60,6 +60,7 @@
 
 #define SLEEP_AFTER_SEND_IBSS  2
 #define SLEEP_AFTER_SEND_IBEC  3
+#define DFU_RECONNECT_TIMEOUT_SECS 5u
 
 /* Tool binary base-names. */
 #define TOOL_IMG4            "img4"
@@ -729,7 +730,7 @@ int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
  * Three-tier layout:
  *
  *   Primitives   dfu_open_client, dfu_poll_until, dfu_with_client
- *   Helpers      dfu_wait_ready, dfu_verify_mode, dfu_reset_reconnect
+ *   Helpers      dfu_wait_ready
  *   Public API   dfu_wait_for_device, dfu_get_info, dfu_send_file, dfu_send_cmd
  */
 
@@ -857,35 +858,9 @@ static int dfu_with_client(dfu_client_cb_t cb, void *ctx)
 /* ─── Coordination helpers ────────────────────────────────────────────────── */
 
 /* Accept any valid DFU/recovery mode. */
-int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
+int dfu_wait_ready(const char *context)
 {
-    return dfu_poll_until(-1, max_wait_secs, context);
-}
-
-/* Require a specific recovery mode. */
-static int dfu_verify_mode(int expected_mode, unsigned int max_wait_secs,
-                           const char *context)
-{
-    return dfu_poll_until(expected_mode, max_wait_secs, context);
-}
-
-/* Issue a reset, close, then poll until the device re-enumerates. */
-static int dfu_reset_reconnect(const char *context)
-{
-    log_info("Resetting device connection after %s...", context);
-
-    irecv_client_t client = dfu_open_client();
-    if (client) {
-        irecv_reset(client);
-        irecv_close(client);
-    } else {
-        log_warn("dfu_reset_reconnect: could not open client for reset "
-                 "after %s — proceeding to poll anyway\n", context);
-    }
-
-    usleep(500000); /* 500 ms: was 1 µs (almost certainly a typo) */
-
-    return dfu_wait_ready(10, context);
+    return dfu_poll_until(-1, DFU_RECONNECT_TIMEOUT_SECS, context);
 }
 
 
@@ -907,7 +882,7 @@ int dfu_wait_for_device(void)
         irecv_client_t client = dfu_open_client();
         if (client) {
             /*
-            irecv_error_t err = irecv_setenv(client, "auto-boot", "true");
+            irecv_error_t err = irecv_setenv(client, "auto-boot", "false");
             if (err != IRECV_E_SUCCESS)
                 log_error("irecv_setenv: %s\n", irecv_strerror(err));
 
@@ -1019,6 +994,9 @@ static int cb_send_file(irecv_client_t client, void *opaque)
 
 int dfu_send_file(const char *filepath)
 {
+    if (dfu_wait_ready("send file") != 0)
+        return -1;
+    
     send_file_ctx_t ctx = { filepath };
     return dfu_with_client(cb_send_file, &ctx);
 }
@@ -1035,6 +1013,9 @@ static int cb_send_cmd(irecv_client_t client, void *opaque)
 
 int dfu_send_cmd(const char *command)
 {
+    if (dfu_wait_ready("send command") != 0)
+        return -1;
+    
     send_cmd_ctx_t ctx = { command };
     return dfu_with_client(cb_send_cmd, &ctx);
 }
@@ -1867,7 +1848,6 @@ static bool needs_trust_cache_send(uint32_t cpid)
     return cpid == 0x8015 || cpid == 0x8010 || cpid == 0x7000;
 }
 
-
 /* ═══════════════════════════════════════════════════════════════════════════
  * stage_boot_ramdisk
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -1887,13 +1867,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: gastera1n_reset failed\n");
         return -1;
     }
-
-    /* Wait for the device to re-enumerate after gastera1n_reset(). */
-    if (dfu_wait_ready(2, "gastera1n_reset") != 0) {
-        log_error("stage_boot_ramdisk: device did not re-enumerate "
-                  "after reset\n");
-        return -1;
-    }
     
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
@@ -1901,18 +1874,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: iBSS send failed\n");
         return -1;
     }
-
-    if (dfu_wait_ready(SLEEP_AFTER_SEND_IBSS, "iBSS") != 0) {
-        log_info("Device did not reconnect after iBSS — retrying send...");
-        if (dfu_send_file(ctx->ibss_img4) != 0) {
-            log_error("stage_boot_ramdisk: iBSS retry send failed\n");
-            return -1;
-        }
-        if (dfu_wait_ready(SLEEP_AFTER_SEND_IBSS, "iBSS retry") != 0) {
-            log_error("stage_boot_ramdisk: device did not reconnect after iBSS retry\n");
-            return -1;
-        }
-    }
+    sleep(SLEEP_AFTER_SEND_IBSS);
 
     /* ── iBEC ────────────────────────────────────────────────────────── */
     log_info("Sending iBEC...");
@@ -1929,11 +1891,8 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         }
     }
 
-    if (dfu_reset_reconnect("iBEC") != 0) {
-        log_error("stage_boot_ramdisk: device did not reconnect after iBEC\n");
-        return -1;
-    }
-
+    sleep(SLEEP_AFTER_SEND_IBEC);
+    
     /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
     if (dfu_send_file(ctx->bootim_img4)       != 0 ||
