@@ -1668,23 +1668,14 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     */    
 detach:
 
-    {
-        int detached = 0;
-        for (int i = 0; i < 5; i++) {
-            if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) {
-                detached = 1;
-                break;
-            }
+    if (ret != 0)  {
+         /* error path — just detach and bail */
+        for (int i = 0; i < 3; i++) {
+            if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) break;
             sleep(1);
         }
-        if (!detached) {
-            log_error("stage_build_ramdisk: failed to detach '%s' after 5 attempts — "
-                      "image may be corrupt\n", ctx->mount);
-            return -1;   /* do NOT proceed to resize with a live mount */
-        }
+        return -1;
     }
-
-    if (ret != 0) return ret;
 
     /*
      * Phase 2 – rebuild the image from the modified source folder.
@@ -1695,7 +1686,7 @@ detach:
      * is owned 0:0 on disk, which is what the device expects when it
      * mounts the ramdisk.
      *
-     * rdsk_dmg (the phase-1 working image) is no longer needed after
+     * rdsk_tmp (the phase-1 working image) is no longer needed after
      * this point and is removed to keep the staging directory tidy.
      */
     if (shell_cmd(
@@ -1714,8 +1705,14 @@ detach:
     }
 
     unlink(rdsk_tmp);
+
+    /* Now safe to detach — image has been captured. */
+    for (int i = 0; i < 3; i++) {
+        if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) break;
+        sleep(1);
+    }
     
-    if (shell_cmd("hdiutil resize -sectors min '%s/rdsk.dmg'", ctx->staging) != 0)
+    if (shell_cmd("hdiutil resize -sectors min '%s'", rdsk_dmg) != 0)
         return -1;
 
 #undef RDSK_FAIL
