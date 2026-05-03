@@ -1583,11 +1583,6 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     char ssh64_gz[PATH_MAX];
     snprintf(ssh64_gz, sizeof(ssh64_gz), "%s/ssh64.tar.gz", g_tool_dir);
 
-    /*
-     * FIX #1 (unquoted glob): g_tool_dir is now single-quoted in the shell
-     * command so paths containing spaces don't break glob expansion.
-     * Also validate the reassembled archive is non-empty before proceeding.
-     */
     if (access(ssh64_gz, F_OK) != 0) {
         if (shell_cmd("cat '%s'/ssh64.tar.gz_* > '%s'", g_tool_dir, ssh64_gz) != 0)
             return -1;
@@ -1616,12 +1611,6 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
                   rdsk_dmg, ctx->mount) != 0)
         return -1;
 
-    /*
-     * FIX #2 (mount readiness check): readdir() always returns "." first,
-     * so the old check never actually waited for real content.  Instead,
-     * poll until we can stat() a known path that must exist in a healthy
-     * ramdisk (/usr/local/bin), with an explicit timeout error on failure.
-     */
     int mount_ready = 0;
     for (int i = 0; i < 50; i++) {          /* up to ~5 s total */
         char probe[PATH_MAX];
