@@ -1578,7 +1578,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     char rdsk_dec[PATH_MAX], rdsk_tmp[PATH_MAX], rdsk_dmg[PATH_MAX];
     snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec",     ctx->ramdisk);
-    snprintf(rdsk_tmp, sizeof(rdsk_dmg), "%s/rdsk_tmp.dmg", ctx->staging);
+    snprintf(rdsk_tmp, sizeof(rdsk_tmp), "%s/rdsk_tmp.dmg", ctx->staging);
     snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
 
     if (rename(rdsk_dec, rdsk_tmp) != 0) {
