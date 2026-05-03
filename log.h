@@ -13,7 +13,7 @@ extern bool DEBUG_ENABLED;
 #define _color_reset "\033[0m"
 
 #define _log_base(str, color, ...) \
-    printf(color "%s:%d (%s) --> " str _color_reset, \
+    printf(color "%s:%d (%s) --> " str _color_reset "\n", \
            __FILE__, __LINE__, __func__, ##__VA_ARGS__)
 
 #define log_error(str, ...) _log_base(str, _color_error, ##__VA_ARGS__)
