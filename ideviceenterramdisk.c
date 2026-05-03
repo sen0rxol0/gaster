@@ -227,6 +227,32 @@ static int gunzip_file(const char *gz_path, const char *out_path)
     return ret;
 }
 
+static int chown_r(const char *path, uid_t uid, gid_t gid)
+{
+    if (lchown(path, uid, gid) != 0) {
+        log_error("chown_r: lchown '%s': %s\n", path, strerror(errno));
+        return -1;
+    }
+
+    struct stat st;
+    if (lstat(path, &st) != 0 || !S_ISDIR(st.st_mode))
+        return 0;
+
+    DIR *d = opendir(path);
+    if (!d) return -1;
+
+    struct dirent *ent;
+    int ret = 0;
+    while ((ent = readdir(d)) != NULL) {
+        if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+        char child[PATH_MAX];
+        snprintf(child, sizeof(child), "%s/%s", path, ent->d_name);
+        if (chown_r(child, uid, gid) != 0) { ret = -1; break; }
+    }
+    closedir(d);
+    return ret;
+}
+
 /*
  * make_executable – chmod +x and strip com.apple.quarantine.
  */
@@ -1655,6 +1681,10 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
             ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: cleanup pass failed");
 
+    /* Ensure everything in the ramdisk is owned root:wheel (uid=0, gid=0). */
+    if (chown_r(ctx->mount, 0, 0) != 0)
+        RDSK_FAIL("stage_build_ramdisk: chown root:wheel sweep failed");
+    
 detach:
 
     {
