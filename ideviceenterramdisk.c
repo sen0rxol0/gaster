@@ -729,9 +729,9 @@ int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
  *
  * Three-tier layout:
  *
- *   Primitives   dfu_open_client, dfu_poll_until, dfu_with_client
- *   Helpers      dfu_wait_ready
- *   Public API   dfu_wait_for_device, dfu_get_info, dfu_send_file, dfu_send_cmd
+ *   Primitives   dfu_open_client, dfu_poll, dfu_with_client
+ *   Public API   dfu_wait_for_device, dfu_wait_ready,
+ *                dfu_get_info, dfu_send_file, dfu_send_cmd
  */
 
 
@@ -740,8 +740,8 @@ int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
 /*
  * dfu_open_client – open and validate a DFU/recovery client, single attempt.
  *
- * Returns a connected client in a usable recovery mode, or NULL.
- * Does not retry — callers that need retry logic use dfu_poll_until.
+ * Returns a connected client in a usable mode, or NULL.
+ * Does not retry — callers that need retry use dfu_poll.
  */
 static irecv_client_t dfu_open_client(void)
 {
@@ -773,63 +773,59 @@ static irecv_client_t dfu_open_client(void)
 }
 
 /*
- * dfu_poll_until – core polling primitive used by every wait/verify function.
+ * dfu_poll – core polling primitive.
  *
- * Polls every POLL_INTERVAL_US microseconds for up to max_wait_secs seconds.
- * If expected_mode >= 0 the current mode must match it exactly; otherwise any
- * valid mode is accepted.
+ * initial_delay_ms  – sleep before the first probe (0 = probe immediately).
+ *                     Use non-zero after sends to let the device drop off USB.
+ * timeout_ms        – give up after this many ms (0 = poll forever).
+ * context           – label used in log messages.
  *
- * Returns 0 when the condition is met, -1 on timeout.
+ * Polls every 500 ms.  Returns 0 when a device is found, -1 on timeout.
  */
-#define POLL_INTERVAL_US 500000u   /* 500 ms */
+#define POLL_INTERVAL_MS 500u
 
-static int dfu_poll_until(int expected_mode, unsigned int max_wait_secs,
-                          const char *context)
+static int dfu_poll(unsigned int initial_delay_ms,
+                    unsigned int timeout_ms,
+                    const char  *context)
 {
-    if (expected_mode >= 0)
-        log_info("Waiting for device mode 0x%04X after %s (up to %us)...",
-                 expected_mode, context, max_wait_secs);
-    else
-        log_info("Waiting for device after %s (up to %us)...",
-                 context, max_wait_secs);
+    if (initial_delay_ms)
+        usleep(initial_delay_ms * 1000u);
 
-    usleep(1000000); /* 1000 ms: let the device drop off USB before first probe */
-
-    const unsigned int limit_ms = max_wait_secs * 1000u;
     unsigned int elapsed_ms = 0;
 
-    while (elapsed_ms < limit_ms) {
+    for (;;) {
         irecv_client_t client = dfu_open_client();
         if (client) {
-            int mode = 0;
-            irecv_get_mode(client, &mode);
             irecv_close(client);
-
-            if (expected_mode < 0 || mode == expected_mode) {
+            if (initial_delay_ms || timeout_ms)
                 log_info("Device ready after %s (%u ms).",
-                         context, elapsed_ms + 500u);
-                return 0;
-            }
-            log_debug("dfu_poll_until: mode 0x%04X, want %s — retrying\n",
-                      mode, expected_mode < 0 ? "any" : "specific");
+                         context, elapsed_ms + initial_delay_ms);
+            return 0;
         }
 
-        usleep(POLL_INTERVAL_US);
-        elapsed_ms += POLL_INTERVAL_US / 1000u;
-    }
+        if (timeout_ms && elapsed_ms >= timeout_ms) {
+            log_error("dfu_poll: device not found within %u ms after %s\n",
+                      timeout_ms, context);
+            return -1;
+        }
 
-    log_error("dfu_poll_until: device did not reach expected state "
-              "within %us after %s\n", max_wait_secs, context);
-    return -1;
+        /* Periodic status line when spinning indefinitely. */
+        if (!timeout_ms && elapsed_ms % 5000u == 0)
+            log_info("Still waiting for DFU device... (%u s elapsed)",
+                     (elapsed_ms + initial_delay_ms) / 1000u);
+
+        usleep(POLL_INTERVAL_MS * 1000u);
+        elapsed_ms += POLL_INTERVAL_MS;
+    }
 }
 
-#undef POLL_INTERVAL_US
+#undef POLL_INTERVAL_MS
 
 /*
  * dfu_client_cb_t – callback type for dfu_with_client.
  *
- * The callback receives the open client and a caller-supplied context
- * pointer.  It must not close the client — dfu_with_client does that.
+ * Receives the open client and a caller-supplied context pointer.
+ * Must not close the client — dfu_with_client does that.
  * Return 0 on success, -1 on failure.
  */
 typedef int (*dfu_client_cb_t)(irecv_client_t client, void *ctx);
@@ -837,10 +833,7 @@ typedef int (*dfu_client_cb_t)(irecv_client_t client, void *ctx);
 /*
  * dfu_with_client – open a client, invoke cb, close.
  *
- * Eliminates the open/error-check/close boilerplate that was duplicated
- * across dfu_send_file, dfu_send_cmd, dfu_get_info, and dfu_wait_for_device.
- *
- * Returns 0 on success, -1 if the client could not be opened or if cb fails.
+ * Returns 0 on success, -1 if the client could not be opened or cb fails.
  */
 static int dfu_with_client(dfu_client_cb_t cb, void *ctx)
 {
@@ -855,56 +848,31 @@ static int dfu_with_client(dfu_client_cb_t cb, void *ctx)
 }
 
 
-/* ─── Coordination helpers ────────────────────────────────────────────────── */
-
-/* Accept any valid DFU/recovery mode. */
-int dfu_wait_ready(unsigned int max_wait_secs, const char *context)
-{
-    return dfu_poll_until(-1, max_wait_secs, context);
-}
-
-
 /* ─── Public API ──────────────────────────────────────────────────────────── */
 
 /*
- * dfu_wait_for_device – block until a DFU/recovery device appears, then
- * set auto-boot and save environment.
+ * dfu_wait_for_device – spin until any DFU/recovery device appears.
+ *
+ * No initial delay, no timeout.  Used at startup before the boot pipeline
+ * begins, when the device is expected to already be in DFU mode.
  */
 int dfu_wait_for_device(void)
 {
-#define DFU_POLL_INTERVAL_MS 500u
-
     log_info("Searching for DFU mode device...");
+    return dfu_poll(0, 0, "device search");
+}
 
-    unsigned int elapsed_ms = 0;
-
-    for (;;) {
-        irecv_client_t client = dfu_open_client();
-        if (client) {
-            /*
-            irecv_error_t err = irecv_setenv(client, "auto-boot", "false");
-            if (err != IRECV_E_SUCCESS)
-                log_error("irecv_setenv: %s\n", irecv_strerror(err));
-
-            err = irecv_saveenv(client);
-            if (err != IRECV_E_SUCCESS)
-                log_error("irecv_saveenv: %s\n", irecv_strerror(err));
-            */
-            
-            irecv_close(client);
-            log_info("DFU device found after %us.", elapsed_ms / 1000u);
-            return 0;
-        }
-
-        if (elapsed_ms % 5000u == 0)
-            log_info("Still waiting for DFU device... (%us elapsed)",
-                     elapsed_ms / 1000u);
-
-        usleep(DFU_POLL_INTERVAL_MS * 1000u);
-        elapsed_ms += DFU_POLL_INTERVAL_MS;
-    }
-
-#undef DFU_POLL_INTERVAL_MS
+/*
+ * dfu_wait_ready – wait for a device to re-enumerate after a send.
+ *
+ * Applies a 1-second initial delay to let the device drop off USB before
+ * the first probe, then polls up to timeout_secs seconds.
+ *
+ * Returns 0 on success, -1 on timeout.
+ */
+int dfu_wait_ready(unsigned int timeout_secs, const char *context)
+{
+    return dfu_poll(1000u, timeout_secs * 1000u, context);
 }
 
 /*
