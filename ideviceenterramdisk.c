@@ -1640,7 +1640,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
                   ctx->mount, ssh64_gz) != 0)
         RDSK_FAIL("stage_build_ramdisk: tar extract of ssh64 failed");
 
-    if (shell_cmd("rsync -auK '%s/sshd/' '%s/'", ctx->mount, ctx->mount) != 0)
+    if (shell_cmd("rsync --ignore-existing -auK '%s/sshd/' '%s/'", ctx->mount, ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: rsync of sshd tree failed");
 
     if (patch_restored_external_in_ramdisk(ctx) != 0)
