@@ -47,12 +47,13 @@ int dfu_wait_for_device(void);
 
 /*
  * dfu_wait_ready – poll until the DFU/recovery client is reachable or
- * max_wait_secs elapses.  Used after iBSS/iBEC sends to absorb USB
- * re-enumeration delay.  context is a short label used in log messages.
+ * timeout_secs elapses.
  *
  * Returns 0 if the device responds, -1 on timeout.
  */
-int dfu_wait_ready(unsigned int max_wait_secs, const char *context);
+int dfu_wait_ready(unsigned int initial_delay_ms,
+                   unsigned int timeout_secs,
+                   const char  *context);
 
 /*
  * dfu_get_info – query a named property from the connected DFU device.
