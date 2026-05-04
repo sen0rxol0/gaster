@@ -558,12 +558,10 @@ static void ctx_init(rdsk_ctx_t *ctx)
  * The im4m file is also stored in the cache so SHSH blobs survive across
  * runs.
  */
-static int ctx_set_cache_dir(rdsk_ctx_t *ctx,
-                              const char *ecid,
-                              const char *cpid)
+static int ctx_set_cache_dir(rdsk_ctx_t *ctx)
 {
     snprintf(ctx->cache_dir, sizeof(ctx->cache_dir),
-             "%s/%s_%s", CACHE_BASE_DIR, ecid, cpid);
+             "%s/%s_%s", CACHE_BASE_DIR, g_ecid, g_cpid);
 
     if (mkdir_p(ctx->cache_dir, 0755) != 0) {
         log_error("ctx_set_cache_dir: failed to create '%s': %s\n",
@@ -672,7 +670,7 @@ static void cache_invalidate(const rdsk_ctx_t *ctx)
 static int cache_load_for_boot(rdsk_ctx_t *ctx)
 {
 
-    int ret = ctx_set_cache_dir(ctx, g_ecid, g_cpid);
+    int ret = ctx_set_cache_dir(ctx);
     if (ret != 0) return -1;
 
     if (!cache_is_valid(ctx)) {
@@ -735,7 +733,7 @@ int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
  *
  *   Primitives   dfu_open_client, dfu_poll, dfu_with_client
  *   Public API   dfu_wait_for_device, dfu_wait_ready,
- *                dfu_get_info, dfu_send_file, dfu_send_cmd
+ *                dfu_get_all_info, dfu_send_file, dfu_send_cmd
  */
 
 
@@ -851,36 +849,6 @@ static int dfu_with_client(dfu_client_cb_t cb, void *ctx)
     return ret;
 }
 
-
-/* ─── Public API ──────────────────────────────────────────────────────────── */
-
-/*
- * dfu_wait_for_device – spin until any DFU/recovery device appears.
- *
- * No initial delay, no timeout.  Used at startup before the boot pipeline
- * begins, when the device is expected to already be in DFU mode.
- */
-int dfu_wait_for_device(void)
-{
-    log_info("Searching for DFU mode device...");
-    return dfu_poll(0, 0, "device search");
-}
-
-/*
- * dfu_wait_ready – wait for a device to re-enumerate.
- *
- * Applies a initial delay to let the device drop off USB before
- * the first probe, then polls up to timeout_secs seconds.
- *
- * Returns 0 on success, -1 on timeout.
- */
-int dfu_wait_ready(unsigned int initial_delay_ms,
-                   unsigned int timeout_secs,
-                   const char  *context)
-{
-    return dfu_poll(initial_delay_ms, timeout_secs * 1000u, context);
-}
-
 static int cb_get_all_info(irecv_client_t client, void *opaque)
 {
     (void)opaque;
@@ -915,6 +883,35 @@ static int ensure_device_info(void)
     log_info("Device: %s (%s) ECID=%s CPID=%s",
              g_product_type, g_model, g_ecid, g_cpid);
     return 0;
+}
+
+/* ─── Public API ──────────────────────────────────────────────────────────── */
+
+/*
+ * dfu_wait_for_device – spin until any DFU/recovery device appears.
+ *
+ * No initial delay, no timeout.  Used at startup before the boot pipeline
+ * begins, when the device is expected to already be in DFU mode.
+ */
+int dfu_wait_for_device(void)
+{
+    log_info("Searching for DFU mode device...");
+    return dfu_poll(0, 0, "device search");
+}
+
+/*
+ * dfu_wait_ready – wait for a device to re-enumerate.
+ *
+ * Applies a initial delay to let the device drop off USB before
+ * the first probe, then polls up to timeout_secs seconds.
+ *
+ * Returns 0 on success, -1 on timeout.
+ */
+int dfu_wait_ready(unsigned int initial_delay_ms,
+                   unsigned int timeout_secs,
+                   const char  *context)
+{
+    return dfu_poll(initial_delay_ms, timeout_secs * 1000u, context);
 }
 
 /* Callback context for send_file. */
@@ -1120,7 +1117,7 @@ static int stage_prepare(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    int cret = ctx_set_cache_dir(ctx, g_ecid, g_cpid);
+    int cret = ctx_set_cache_dir(ctx);
     if (cret != 0) return -1;
 
     /*
@@ -1809,19 +1806,19 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 int ideviceenterramdisk_load(void)
-{
+{    
+    rdsk_ctx_t ctx;
+    ctx_init(&ctx);
+
     if (ensure_device_info() != 0) {
         log_error("ideviceenterramdisk_load: could not populate device info\n");
         return -1;
     }
     
-    rdsk_ctx_t ctx;
-    ctx_init(&ctx);
-
     /*
      * ramdiskBootMode fast path – check the per-device cache first.
      *
-     * cache_load_for_boot() opens the device, reads ECID+CPID, constructs
+     * cache_load_for_boot() with ECID+CPID, constructs
      * the cache directory path, and verifies that all required img4 files
      * are present and marked complete.  If the cache is valid we go
      * straight to booting without any download/decrypt/patch work.
