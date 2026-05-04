@@ -1806,6 +1806,11 @@ int ideviceenterramdisk_load(void)
     rdsk_ctx_t ctx;
     ctx_init(&ctx);
 
+    if (dfu_wait_for_device() != 0) {
+        log_error("ideviceenterramdisk_load: no device in DFU mode\n");
+        return -1;
+    }
+    
     if (ensure_device_info() != 0) {
         log_error("ideviceenterramdisk_load: could not populate device info\n");
         return -1;
