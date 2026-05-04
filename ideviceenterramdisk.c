@@ -1480,11 +1480,11 @@ static bool needs_go_cmd(uint32_t cpid)
 static int dfu_verify_mode(int expected_mode)
 {
     /* Initial pause — let the device drop off USB. */
-    usleep(200000);
+    usleep(2000000);
 
     log_info("Verifying device mode (expecting 0x%04X)...", expected_mode);
 
-    irecv_client_t client = NULL;
+    irecv_client_t client = dfu_open_client();
 
     if (client) {
         int mode = 0;
