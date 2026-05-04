@@ -38,7 +38,6 @@ int main(int argc, char **argv)
     puts("//\thttps://github.com/tihmstar/libfragmentzip");
     puts("//\thttps://github.com/tihmstar/iBoot64Patcher");
     puts("//\thttps://github.com/Cryptiiiic/iBoot64Patcher");
-    // FIX: corrected double-slash in the following URLs
     puts("//\thttps://github.com/Ralph0045/Kernel64Patcher");
     puts("//\thttps://github.com/palera1n/Kernel64Patcher");
     puts("//\thttps://github.com/palera1n/KPlooshFinder");
@@ -46,7 +45,6 @@ int main(int argc, char **argv)
     puts("//\thttps://github.com/synackuk/belladonna");
     puts("//\thttps://github.com/libimobiledevice/libirecovery");
     puts("//\thttps://github.com/libimobiledevice/libplist");
-    // FIX: corrected double-slash in the following URLs
     puts("//\thttps://github.com/ProcursusTeam/ldid");
     puts("//\thttps://github.com/realnp/ibootim");
     puts("//\thttps://github.com/1Conan/tsschecker");
