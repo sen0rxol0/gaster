@@ -82,14 +82,7 @@ int main(int argc, char **argv)
     }
 
     log_info("Device is now in pwned DFU mode.");
-    
-    /*if (gastera1n_reset() != 0) {
-        log_error("Failed to reset device USB after pwning\n");
-        return -1;
-    }
-
-    sleep(1);*/
-    
+        
     if(!pwnDFUMode && ideviceenterramdisk_load() != 0) {
         log_error("Failed to boot device into SSH ramdisk\n");
         return -1;
