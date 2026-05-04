@@ -1468,6 +1468,37 @@ static bool needs_go_cmd(uint32_t cpid)
            cpid == 0x8011 || cpid == 0x8010;
 }
 
+/*
+ * dfu_verify_mode – expect device to enumerate in mode.
+ *
+ * After iBSS is accepted the device resets and re-enumerates as
+ * IRECV_K_RECOVERY_MODE_2 (PID 0x1281).  Verifying the mode change
+ * confirms iBSS executed rather than just that a USB device appeared.
+ *
+ * Returns 0 when the expected mode is seen, -1 on timeout.
+ */
+static int dfu_verify_mode(int expected_mode)
+{
+    /* Initial pause — let the device drop off USB. */
+    usleep(200000);
+
+    log_info("Verifying device mode (expecting 0x%04X)...", expected_mode);
+
+    irecv_client_t client = NULL;
+
+    if (client) {
+        int mode = 0;
+        irecv_get_mode(client, &mode);
+        irecv_close(client);
+
+        if (mode == expected_mode) {
+            log_info("Mode verified: 0x%04X", mode);
+            return 0;
+        }
+    }
+    return -1;
+}
+
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
     uint32_t cpid = (uint32_t)strtoul(g_cpid, NULL, 16);
@@ -1484,11 +1515,18 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: iBSS send failed\n");
         return -1;
     }
-    /* TODO: check if device is in Recovery before resending iBSS */
-    if (dfu_send_file(ctx->ibss_img4) != 0) {
-        log_error("stage_boot_ramdisk: iBSS send failed\n");
-        return -1;
+
+    /* Verify iBSS executed by confirming recovery mode transition. */
+    if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2) != 0) {
+        log_warn("iBSS did not execute — mode transition not observed\n");
+        log_info("Resending iBSS...");
+        
+        if (dfu_send_file(ctx->ibss_img4) != 0) {
+            log_error("stage_boot_ramdisk: iBSS resend failed\n");
+            return -1;
+        }
     }
+
     if (dfu_wait_ready(IBSS_INITIAL_DELAY_MS, DFU_TIMEOUT_SECS) != 0) {
         log_error("stage_boot_ramdisk: device never re-appeared after iBSS\n");
         return -1;
