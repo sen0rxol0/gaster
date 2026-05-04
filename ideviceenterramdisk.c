@@ -7,46 +7,46 @@
  * Tool resolution
  * ───────────────
  * img4 is built as part of this project and resolved at runtime via
- * g_tool_dir.  The companion pre-built tools (ldid2, iBoot64Patcher,
- * tsschecker, Kernel64Patcher) are expected in the same directory
- * as img4, decompressed on first use by ensure_tool().
+ * g_tool_dir.  Companion pre-built tools (ldid2, iBoot64Patcher,
+ * tsschecker, Kernel64Patcher) are expected in the same directory,
+ * decompressed on first use by ensure_tool().
  *
  * Shell usage
  * ───────────
- * popen() is retained only for calls that are irreducibly shell-based
- * (hdiutil, tar, rsync) or that invoke the external tool binaries whose
- * stdout must be captured (ldid2 -e).  All file-system operations use
- * the native C helpers defined below.  Tool arguments are passed through
- * exec_tool() which bypasses /bin/sh entirely, eliminating shell-
- * injection risk on paths that contain spaces.
+ * popen() is used only for calls that are irreducibly shell-based
+ * (hdiutil, tar, rsync) or for external tools whose stdout must be
+ * captured (ldid2 -e).  All other tool invocations use exec_tool(),
+ * which bypasses /bin/sh entirely.
  */
 
+#include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
-#include <stdarg.h>
 #include <string.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <errno.h>
-#include <dirent.h>
-#include <sys/stat.h>
-#include <sys/param.h>
-#include <sys/wait.h>
 #include <zlib.h>
+
+#include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+
 #ifdef __APPLE__
 #  include <sys/xattr.h>
 #endif
 
-#include "log.h"
+#include <libfragmentzip/libfragmentzip.h>
+#include <libirecovery.h>
+#include <plist/plist.h>
+
 #include "gastera1n.h"
 #include "ideviceenterramdisk.h"
 #include "ideviceloaders.h"
 #include "kerneldiff.h"
-
-#include <plist/plist.h>
-#include <libfragmentzip/libfragmentzip.h>
-#include <libirecovery.h>
+#include "log.h"
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -57,53 +57,42 @@
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
-/* Delays passed to dfu_wait_ready (milliseconds). */
-#define IBSS_INITIAL_DELAY_MS   2000u
-#define IBEC_INITIAL_DELAY_MS   4000u
+#define IBSS_INITIAL_DELAY_MS       2000u
+#define IBEC_INITIAL_DELAY_MS       4000u
+#define DFU_RECONNECT_TIMEOUT_SECS  5u
 
-/* Reconnect poll budget (seconds). */
-#define DFU_RECONNECT_TIMEOUT_SECS   5u
-
-/* Tool binary base-names. */
 #define TOOL_IMG4            "img4"
 #define TOOL_LDID2           "ldid2"
 #define TOOL_TSSCHECKER      "tsschecker"
 #define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
 #define TOOL_KERNEL64PATCHER "Kernel64Patcher"
 
-/* Cache manifest file – presence signals a complete, valid cache entry. */
 #define CACHE_MANIFEST_NAME  ".complete"
 
+
 /* ═══════════════════════════════════════════════════════════════════════════
- * Global tool directory
+ * Globals
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 static char g_tool_dir[PATH_MAX] = ".";
 
-/* Build the absolute path for a named tool into out (size PATH_MAX). */
-static void tool_path(const char *name, char *out)
-{
-    snprintf(out, PATH_MAX, "%s/%s", g_tool_dir, name);
-}
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Global cached device info
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * Fetched once via ensure_device_info() and reused by all stages.
- * All four values are populated atomically — either all valid or all empty.
- */
+/* Fetched once via ensure_device_info() and reused by all stages. */
 static char g_ecid[64];
 static char g_cpid[16];
 static char g_product_type[64];
 static char g_model[64];
 
+static void tool_path(const char *name, char *out)
+{
+    snprintf(out, PATH_MAX, "%s/%s", g_tool_dir, name);
+}
+
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Native C file-system helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Recursively remove a directory tree (mirrors `rm -rf`).
-   Returns 0 on success or if path does not exist, -1 on error. */
+/* Recursively remove a directory tree (mirrors `rm -rf`). */
 static int rm_rf(const char *path)
 {
     struct stat st;
@@ -129,8 +118,7 @@ static int rm_rf(const char *path)
     return (ret == 0) ? rmdir(path) : -1;
 }
 
-/* Create a directory and all missing parents (mirrors `mkdir -p`).
-   Returns 0 if the directory already exists or was created, -1 on error. */
+/* Create a directory and all missing parents (mirrors `mkdir -p`). */
 static int mkdir_p(const char *path, mode_t mode)
 {
     char tmp[PATH_MAX];
@@ -148,8 +136,7 @@ static int mkdir_p(const char *path, mode_t mode)
     return (mkdir(tmp, mode) != 0 && errno != EEXIST) ? -1 : 0;
 }
 
-/* Binary file copy (mirrors `cp src dst`).
-   Preserves source permissions.  Returns 0 on success, -1 on error. */
+/* Binary file copy, preserving source permissions. */
 static int file_copy(const char *src, const char *dst)
 {
     FILE *in = fopen(src, "rb");
@@ -186,9 +173,7 @@ static int file_copy(const char *src, const char *dst)
     return ret;
 }
 
-/* Decompress gz_path → out_path using zlib.
-   Removes gz_path on success (mirrors `gunzip`).
-   Returns 0 on success, -1 on error. */
+/* Decompress gz_path → out_path via zlib, removing gz_path on success. */
 static int gunzip_file(const char *gz_path, const char *out_path)
 {
     gzFile gz = gzopen(gz_path, "rb");
@@ -222,16 +207,14 @@ static int gunzip_file(const char *gz_path, const char *out_path)
     gzclose(gz);
 
     if (ret == 0)
-        unlink(gz_path);   /* mirror gunzip: remove the .gz source */
+        unlink(gz_path);
     else
-        unlink(out_path);  /* clean up partial output */
+        unlink(out_path);
 
     return ret;
 }
 
-/*
- * make_executable – chmod +x and strip com.apple.quarantine.
- */
+/* chmod +x and strip com.apple.quarantine. */
 static int make_executable(const char *path)
 {
     struct stat st;
@@ -243,11 +226,9 @@ static int make_executable(const char *path)
         log_error("make_executable: chmod '%s': %s\n", path, strerror(errno));
         return -1;
     }
-   
 #ifdef __APPLE__
     if (removexattr(path, "com.apple.quarantine", 0) != 0 && errno != ENOATTR) {
-        log_error("strip_quarantine: removexattr '%s': %s\n",
-                  path, strerror(errno));
+        log_error("make_executable: removexattr '%s': %s\n", path, strerror(errno));
         return -1;
     }
 #endif
@@ -270,9 +251,7 @@ static int file_write_line(const char *path, const char *line)
 /* Find the file with a given suffix that has the newest mtime in dir.
    Writes the absolute path into best_path (size PATH_MAX).
    Returns 0 if found, -1 if nothing matched. */
-static int find_newest_file(const char *dir,
-                            const char *suffix,
-                            char *best_path)
+static int find_newest_file(const char *dir, const char *suffix, char *best_path)
 {
     DIR *d = opendir(dir);
     if (!d) return -1;
@@ -284,8 +263,8 @@ static int find_newest_file(const char *dir,
     while ((ent = readdir(d)) != NULL) {
         size_t nlen = strlen(ent->d_name);
         size_t slen = strlen(suffix);
-        if (nlen < slen) continue;
-        if (strcmp(ent->d_name + nlen - slen, suffix) != 0) continue;
+        if (nlen < slen || strcmp(ent->d_name + nlen - slen, suffix) != 0)
+            continue;
 
         char full[PATH_MAX];
         snprintf(full, sizeof(full), "%s/%s", dir, ent->d_name);
@@ -325,10 +304,8 @@ static char *dup_printf(const char *fmt, ...)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * exec_toolv – fork/exec a tool from a pre-built NULL-terminated argv array.
- *
+ * exec_toolv – fork/exec from a NULL-terminated argv array.
  * argv[0] must be the absolute path of the executable.
- * stdout/stderr of the child are inherited from the parent.
  * Returns 0 on success (exit status 0), -1 otherwise.
  */
 static int exec_toolv(const char **argv)
@@ -338,10 +315,8 @@ static int exec_toolv(const char **argv)
         log_error("exec_toolv: fork failed: %s\n", strerror(errno));
         return -1;
     }
-
     if (pid == 0) {
         execv(argv[0], (char *const *)argv);
-        /* execv only returns on error. */
         _exit(127);
     }
 
@@ -350,7 +325,6 @@ static int exec_toolv(const char **argv)
         log_error("exec_toolv: waitpid failed: %s\n", strerror(errno));
         return -1;
     }
-
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         log_error("exec_toolv: '%s' exited with status %d\n",
                   argv[0], WIFEXITED(status) ? WEXITSTATUS(status) : -1);
@@ -361,25 +335,17 @@ static int exec_toolv(const char **argv)
 
 /*
  * exec_tool – varargs wrapper around exec_toolv.
- *
- * Pass the executable path as the first argument, then all additional
- * arguments as separate (const char *) strings, terminated by a NULL
- * sentinel.  Each argument must be a distinct string — never pass a single
- * string containing spaces expecting the shell to split it.
- *
- * Example:
- *   exec_tool("/usr/bin/foo", "-a", "-b", "value", NULL);
+ * Pass the executable path, then all arguments as (const char *) strings,
+ * terminated by NULL.  Never pass a single space-separated string.
  */
 static int exec_tool(const char *path, ...)
 {
-    /* Count arguments to size argv. */
     va_list ap;
-    int argc = 1; /* path itself */
+    int argc = 1;
     va_start(ap, path);
     while (va_arg(ap, const char *) != NULL) argc++;
     va_end(ap);
 
-    /* Allocate argv: argc entries + 1 NULL terminator. */
     const char **argv = malloc(((size_t)argc + 1) * sizeof(char *));
     if (!argv) return -1;
 
@@ -388,7 +354,7 @@ static int exec_tool(const char *path, ...)
     for (int i = 1; i < argc; i++)
         argv[i] = va_arg(ap, const char *);
     va_end(ap);
-    argv[argc] = NULL; /* explicit NULL terminator — do not rely on sentinel */
+    argv[argc] = NULL;
 
     int ret = exec_toolv(argv);
     free(argv);
@@ -396,12 +362,9 @@ static int exec_tool(const char *path, ...)
 }
 
 /*
- * shell_cmd – run an arbitrary shell command via popen(), streaming its
- * output to stdout.  Use only for calls that genuinely require /bin/sh
- * features (pipelines, redirects, globs) or macOS-specific tools such as
- * hdiutil, tar, rsync.
- *
- * Returns 0 on success (exit status 0), -1 otherwise.
+ * shell_cmd – run a shell command via popen(), streaming output to stdout.
+ * Use only for calls requiring /bin/sh features (pipelines, globs) or
+ * macOS-specific tools (hdiutil, tar, rsync).
  */
 static int shell_cmd(const char *fmt, ...)
 {
@@ -432,10 +395,9 @@ static int shell_cmd(const char *fmt, ...)
 }
 
 /*
- * shell_cmd_capture – like shell_cmd but returns the full stdout as a
- * heap-allocated string (caller must free()).  Returns NULL on failure.
- * Used solely for `ldid2 -e` whose output must be redirected to a file
- * in a race-free way.
+ * shell_cmd_capture – like shell_cmd but returns stdout as a heap-allocated
+ * string (caller must free()).  Returns NULL on failure.
+ * Used solely for `ldid2 -e` whose output must be written to a file.
  */
 static char *shell_cmd_capture(const char *fmt, ...)
 {
@@ -480,12 +442,9 @@ typedef struct {
     device_loader loader;
     char *ipsw_url;
 
-    /* Staging / mount directories */
     char staging[PATH_MAX];
     char mount[PATH_MAX];
-
-    /* Per-device cache directory: CACHE_BASE_DIR/<ecid>_<cpid>/ */
-    char cache_dir[PATH_MAX];
+    char cache_dir[PATH_MAX];   /* CACHE_BASE_DIR/<ecid>_<cpid>/ */
 
     /* Raw (im4p) downloads */
     char kernelcache[PATH_MAX];
@@ -495,7 +454,7 @@ typedef struct {
     char ibec[PATH_MAX];
     char ibss[PATH_MAX];
 
-    /* Final img4 payloads (inside staging during build, then cached) */
+    /* Final img4 payloads (written directly to cache_dir) */
     char kernelcache_img4[PATH_MAX];
     char trustcache_img4[PATH_MAX];
     char ramdisk_img4[PATH_MAX];
@@ -513,9 +472,6 @@ static void ctx_init(rdsk_ctx_t *ctx)
 
     snprintf(ctx->staging, sizeof(ctx->staging), STAGING_DIR);
     snprintf(ctx->mount,   sizeof(ctx->mount),   MOUNT_DIR);
-
-    /* cache_dir is populated after device identification in stage_prepare(). */
-    ctx->cache_dir[0] = '\0';
 
 #define STAGE(field, name) \
     snprintf(ctx->field, sizeof(ctx->field), "%s/" name, ctx->staging)
@@ -540,12 +496,8 @@ static void ctx_init(rdsk_ctx_t *ctx)
 }
 
 /*
- * ctx_set_cache_dir – derive cache_dir from ecid/cpid and (re)point all
- * img4 fields to the cache directory so that stage_build_img4() writes
- * directly there and stage_boot_ramdisk() reads from the same paths.
- *
- * The im4m file is also stored in the cache so SHSH blobs survive across
- * runs.
+ * ctx_set_cache_dir – derive cache_dir from ecid/cpid and redirect all
+ * img4 and im4m fields into it so stage_build_img4() writes directly there.
  */
 static int ctx_set_cache_dir(rdsk_ctx_t *ctx)
 {
@@ -581,10 +533,6 @@ static int ctx_set_cache_dir(rdsk_ctx_t *ctx)
  * Device cache helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/*
- * Names of all img4 files that must be present for a cache hit.
- * Must stay in sync with the CACHE() assignments in ctx_set_cache_dir().
- */
 static const char *k_cached_img4_names[] = {
     "kernelcache.img4",
     "trustcache.img4",
@@ -596,16 +544,11 @@ static const char *k_cached_img4_names[] = {
     NULL
 };
 
-/* Path of the manifest sentinel inside cache_dir. */
 static void cache_manifest_path(const rdsk_ctx_t *ctx, char *out)
 {
     snprintf(out, PATH_MAX, "%s/%s", ctx->cache_dir, CACHE_MANIFEST_NAME);
 }
 
-/*
- * cache_is_valid – return true if all required img4 files and the manifest
- * are present in ctx->cache_dir.
- */
 static bool cache_is_valid(const rdsk_ctx_t *ctx)
 {
     if (ctx->cache_dir[0] == '\0') return false;
@@ -625,10 +568,7 @@ static bool cache_is_valid(const rdsk_ctx_t *ctx)
     return true;
 }
 
-/*
- * cache_mark_complete – write the manifest sentinel to signal a valid cache.
- * Call only after all img4 files have been successfully written.
- */
+/* Write the manifest sentinel.  Call only after all img4 files are written. */
 static int cache_mark_complete(const rdsk_ctx_t *ctx)
 {
     char manifest[PATH_MAX];
@@ -636,11 +576,7 @@ static int cache_mark_complete(const rdsk_ctx_t *ctx)
     return file_write_line(manifest, "complete");
 }
 
-/*
- * cache_invalidate – remove the manifest sentinel so the next run
- * rebuilds.  Call before beginning a fresh patch pipeline for this device
- * so a partial run doesn't leave a stale-but-complete-looking cache.
- */
+/* Remove the manifest sentinel so the next run will rebuild. */
 static void cache_invalidate(const rdsk_ctx_t *ctx)
 {
     if (ctx->cache_dir[0] == '\0') return;
@@ -650,17 +586,12 @@ static void cache_invalidate(const rdsk_ctx_t *ctx)
 }
 
 /*
- * cache_load_for_boot – populate ctx->cache_dir from device info and
- * verify that a valid cache exists.  Used by the ramdiskBootMode fast path.
- *
- * Returns  0 on a cache hit (boot can proceed immediately).
- * Returns -1 on a cache miss or if device info cannot be retrieved.
+ * cache_load_for_boot – populate cache_dir and verify a valid cache exists.
+ * Returns 0 on cache hit, -1 on miss or if device info is unavailable.
  */
 static int cache_load_for_boot(rdsk_ctx_t *ctx)
 {
-
-    int ret = ctx_set_cache_dir(ctx);
-    if (ret != 0) return -1;
+    if (ctx_set_cache_dir(ctx) != 0) return -1;
 
     if (!cache_is_valid(ctx)) {
         log_info("No valid cache found for this device — full build required.");
@@ -676,10 +607,6 @@ static int cache_load_for_boot(rdsk_ctx_t *ctx)
  * Progress callbacks
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/*
- * render_progress – single progress bar renderer used by all callers.
- * progress is clamped to [0, 100] before display.
- */
 static void render_progress(unsigned int progress)
 {
     if (progress > 100) progress = 100;
@@ -693,13 +620,11 @@ static void render_progress(unsigned int progress)
     if (progress == 100) printf("\n");
 }
 
-/* fragmentzip download callback – signature matches fragmentzip_progress_t. */
 static void default_prog_cb(unsigned int progress)
 {
     render_progress(progress);
 }
 
-/* irecovery event callback – extracts the progress value and delegates. */
 int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
 {
     (void)client;
@@ -716,24 +641,9 @@ int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event)
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * DFU / irecovery helpers
- * ═══════════════════════════════════════════════════════════════════════════
- *
- * Three-tier layout:
- *
- *   Primitives   dfu_open_client, dfu_poll, dfu_with_client
- *   Public API   dfu_wait_for_device, dfu_wait_ready,
- *                dfu_get_all_info, dfu_send_file, dfu_send_cmd
- */
+ * ═══════════════════════════════════════════════════════════════════════════ */
 
-
-/* ─── Primitives ──────────────────────────────────────────────────────────── */
-
-/*
- * dfu_open_client – open and validate a DFU/recovery client, single attempt.
- *
- * Returns a connected client in a usable mode, or NULL.
- * Does not retry — callers that need retry use dfu_poll.
- */
+/* Open and validate a DFU/recovery client — single attempt, no retry. */
 static irecv_client_t dfu_open_client(void)
 {
     irecv_client_t client = NULL;
@@ -766,10 +676,9 @@ static irecv_client_t dfu_open_client(void)
 /*
  * dfu_poll – core polling primitive.
  *
- * initial_delay_ms  – sleep before the first probe (0 = probe immediately).
- *                     Use non-zero after sends to let the device drop off USB.
- * timeout_ms        – give up after this many ms (0 = poll forever).
- * context           – label used in log messages.
+ * initial_delay_ms  sleep before the first probe (0 = immediate).
+ * timeout_ms        give up after this many ms (0 = poll forever).
+ * context           label used in log messages.
  *
  * Polls every 1000 ms.  Returns 0 when a device is found, -1 on timeout.
  */
@@ -800,7 +709,6 @@ static int dfu_poll(unsigned int initial_delay_ms,
             return -1;
         }
 
-        /* Periodic status line when spinning indefinitely. */
         if (!timeout_ms && elapsed_ms % 5000u == 0)
             log_info("Still waiting for DFU device... (%u s elapsed)",
                      (elapsed_ms + initial_delay_ms) / 1000u);
@@ -812,20 +720,10 @@ static int dfu_poll(unsigned int initial_delay_ms,
 
 #undef POLL_INTERVAL_MS
 
-/*
- * dfu_client_cb_t – callback type for dfu_with_client.
- *
- * Receives the open client and a caller-supplied context pointer.
- * Must not close the client — dfu_with_client does that.
- * Return 0 on success, -1 on failure.
- */
+/* Callback type for dfu_with_client.  Must not close the client. */
 typedef int (*dfu_client_cb_t)(irecv_client_t client, void *ctx);
 
-/*
- * dfu_with_client – open a client, invoke cb, close.
- *
- * Returns 0 on success, -1 if the client could not be opened or cb fails.
- */
+/* Open a client, invoke cb, then close.  Returns 0 on success, -1 on error. */
 static int dfu_with_client(dfu_client_cb_t cb, void *ctx)
 {
     irecv_client_t client = dfu_open_client();
@@ -843,19 +741,16 @@ static int cb_get_all_info(irecv_client_t client, void *opaque)
     (void)opaque;
 
     const struct irecv_device_info *devinfo = irecv_get_device_info(client);
+    if (!devinfo) return -1;
+
     irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
-    //irecv_reset(client);
-    
-    if (!devinfo) return -1;
+    if (!device || !device->product_type || !device->hardware_model) return -1;
 
     snprintf(g_ecid,         sizeof(g_ecid),         "0x%016llX", (unsigned long long)devinfo->ecid);
     snprintf(g_cpid,         sizeof(g_cpid),         "0x%04X",    devinfo->cpid);
-
-    if (!device || !device->product_type || !device->hardware_model) return -1;
-
-    snprintf(g_product_type, sizeof(g_product_type), "%s", device->product_type);
-    snprintf(g_model,        sizeof(g_model),        "%s", device->hardware_model);
+    snprintf(g_product_type, sizeof(g_product_type), "%s",        device->product_type);
+    snprintf(g_model,        sizeof(g_model),        "%s",        device->hardware_model);
 
     return 0;
 }
@@ -875,28 +770,14 @@ static int ensure_device_info(void)
     return 0;
 }
 
-/* ─── Public API ──────────────────────────────────────────────────────────── */
-
-/*
- * dfu_wait_for_device – spin until any DFU/recovery device appears.
- *
- * No initial delay, no timeout.  Used at startup before the boot pipeline
- * begins, when the device is expected to already be in DFU mode.
- */
+/* Spin until any DFU/recovery device appears (no timeout). */
 int dfu_wait_for_device(void)
 {
     log_info("Searching for DFU mode device...");
     return dfu_poll(0, 0, "device search");
 }
 
-/*
- * dfu_wait_ready – wait for a device to re-enumerate.
- *
- * Applies a initial delay to let the device drop off USB before
- * the first probe, then polls up to timeout_secs seconds.
- *
- * Returns 0 on success, -1 on timeout.
- */
+/* Wait for a device to re-enumerate after a send. */
 int dfu_wait_ready(unsigned int initial_delay_ms,
                    unsigned int timeout_secs,
                    const char  *context)
@@ -904,7 +785,6 @@ int dfu_wait_ready(unsigned int initial_delay_ms,
     return dfu_poll(initial_delay_ms, timeout_secs * 1000u, context);
 }
 
-/* Callback context for send_file. */
 typedef struct { const char *filepath; } send_file_ctx_t;
 
 static int cb_send_file(irecv_client_t client, void *opaque)
@@ -917,12 +797,10 @@ static int cb_send_file(irecv_client_t client, void *opaque)
 
 int dfu_send_file(const char *filepath)
 {
-    //if (dfu_wait_for_device() != 0) return -1;
     send_file_ctx_t ctx = { filepath };
     return dfu_with_client(cb_send_file, &ctx);
 }
 
-/* Callback context for send_cmd. */
 typedef struct { const char *command; } send_cmd_ctx_t;
 
 static int cb_send_cmd(irecv_client_t client, void *opaque)
@@ -934,22 +812,21 @@ static int cb_send_cmd(irecv_client_t client, void *opaque)
 
 int dfu_send_cmd(const char *command)
 {
-    //if (dfu_wait_for_device() != 0) return -1;
     send_cmd_ctx_t ctx = { command };
     return dfu_with_client(cb_send_cmd, &ctx);
 }
+
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * SHSH / IM4M helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Extract ApImg4Ticket from a .shsh2 plist file and write it to im4m_path. */
+/* Extract ApImg4Ticket from a .shsh2 plist and write it to im4m_path. */
 static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
 {
     FILE *f = fopen(shsh_path, "rb");
     if (!f) {
-        log_error("im4m_from_shsh: cannot open '%s': %s\n",
-                  shsh_path, strerror(errno));
+        log_error("im4m_from_shsh: cannot open '%s': %s\n", shsh_path, strerror(errno));
         return -1;
     }
 
@@ -1000,8 +877,7 @@ static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
 
     f = fopen(im4m_path, "wb");
     if (!f) {
-        log_error("im4m_from_shsh: cannot write '%s': %s\n",
-                  im4m_path, strerror(errno));
+        log_error("im4m_from_shsh: cannot write '%s': %s\n", im4m_path, strerror(errno));
         free(im4m);
         plist_free(shsh_plist);
         return -1;
@@ -1025,16 +901,9 @@ static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /*
- * ensure_tool – make sure the named tool binary exists and is executable.
- *
- * In the flat release layout tools arrive already decompressed alongside
- * gastera1n.  The .gz fallback handles the legacy case where archives were
- * not pre-decompressed at staging time.  Both paths are resolved relative
- * to g_tool_dir.
- *
- * make_executable() strips com.apple.quarantine in addition to chmod +x so
- * the tool runs without a Gatekeeper prompt on macOS immediately after
- * decompression.
+ * ensure_tool – verify the named tool binary exists and is executable.
+ * Decompresses from a .gz sidecar if the plain binary is absent.
+ * make_executable() also strips com.apple.quarantine on macOS.
  */
 static int ensure_tool(const char *name)
 {
@@ -1054,7 +923,6 @@ static int ensure_tool(const char *name)
         log_error("ensure_tool: failed to make '%s' executable\n", bin);
         return -1;
     }
-
     return 0;
 }
 
@@ -1066,11 +934,7 @@ static int stage_ensure_tools(void)
     if (ensure_tool(TOOL_TSSCHECKER)      != 0) return -1;
     if (ensure_tool(TOOL_KERNEL64PATCHER) != 0) return -1;
 
-    /*
-     * restored_external is a data file, not a tool.  It lives alongside the
-     * other binaries in g_tool_dir (same flat layout).  Decompress from
-     * g_tool_dir if not yet present there.
-     */
+    /* restored_external is a data file alongside the tool binaries. */
     char re_bin[PATH_MAX], re_gz[PATH_MAX];
     snprintf(re_bin, sizeof(re_bin), "%s/restored_external",    g_tool_dir);
     snprintf(re_gz,  sizeof(re_gz),  "%s/restored_external.gz", g_tool_dir);
@@ -1081,7 +945,6 @@ static int stage_ensure_tools(void)
             return -1;
         }
     }
-
     return 0;
 }
 
@@ -1101,23 +964,16 @@ static int stage_prepare(rdsk_ctx_t *ctx)
             break;
         }
     }
-
     if (!found) {
         log_error("stage_prepare: unsupported device\n");
         return -1;
     }
 
-    int cret = ctx_set_cache_dir(ctx);
-    if (cret != 0) return -1;
+    if (ctx_set_cache_dir(ctx) != 0) return -1;
 
-    /*
-     * Invalidate any existing cache before we start building so that a
-     * partial run (crash, power loss) doesn't leave stale payloads that
-     * look valid.
-     */
+    /* Invalidate any existing cache before rebuilding. */
     cache_invalidate(ctx);
 
-    /* Clean up any leftover staging directory then re-create it. */
     if (rm_rf(ctx->staging) != 0 && errno != ENOENT) {
         log_error("stage_prepare: failed to remove '%s'\n", ctx->staging);
         return -1;
@@ -1127,14 +983,9 @@ static int stage_prepare(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    /*
-     * Copy the boot image from g_tool_dir (flat layout) into staging.
-     */
     char bootim_src[PATH_MAX], bootim_dst[PATH_MAX];
-    snprintf(bootim_src, sizeof(bootim_src),
-             "%s/bootim@750x1334.im4p", g_tool_dir);
-    snprintf(bootim_dst, sizeof(bootim_dst),
-             "%s/bootim@750x1334.im4p", ctx->staging);
+    snprintf(bootim_src, sizeof(bootim_src), "%s/bootim@750x1334.im4p", g_tool_dir);
+    snprintf(bootim_dst, sizeof(bootim_dst), "%s/bootim@750x1334.im4p", ctx->staging);
     if (file_copy(bootim_src, bootim_dst) != 0) {
         log_error("stage_prepare: failed to copy boot image\n");
         return -1;
@@ -1147,9 +998,7 @@ static int stage_prepare(rdsk_ctx_t *ctx)
  * Stage: download
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-static int download_component(rdsk_ctx_t *ctx,
-                              const char *remote,
-                              const char *local)
+static int download_component(rdsk_ctx_t *ctx, const char *remote, const char *local)
 {
     fragmentzip_t *ipsw = fragmentzip_open(ctx->ipsw_url);
     if (!ipsw) return -1;
@@ -1183,7 +1032,6 @@ static int stage_download_images(rdsk_ctx_t *ctx)
  * Stage: decrypt
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Decrypt one im4p file using the built img4 tool (exec_tool, no shell). */
 static int img4_decrypt(const char *img4_bin, const char *in, const char *out)
 {
     return exec_tool(img4_bin, "-i", in, "-o", out, NULL);
@@ -1194,25 +1042,23 @@ static int stage_decrypt(rdsk_ctx_t *ctx)
     char img4_bin[PATH_MAX];
     tool_path(TOOL_IMG4, img4_bin);
 
-    /* Kernel, trustcache, ramdisk, devicetree – decrypted via img4. */
-    struct { const char *in; } plain[] = {
-        { ctx->kernelcache },
-        { ctx->trustcache  },
-        { ctx->ramdisk     },
-        { ctx->devicetree  },
-        { NULL }
+    const char *plain[] = {
+        ctx->kernelcache,
+        ctx->trustcache,
+        ctx->ramdisk,
+        ctx->devicetree,
+        NULL
     };
 
-    for (int i = 0; plain[i].in; i++) {
+    for (int i = 0; plain[i]; i++) {
         char out[PATH_MAX];
-        snprintf(out, sizeof(out), "%s.dec", plain[i].in);
-        if (img4_decrypt(img4_bin, plain[i].in, out) != 0) {
-            log_error("stage_decrypt: img4 failed on '%s'\n", plain[i].in);
+        snprintf(out, sizeof(out), "%s.dec", plain[i]);
+        if (img4_decrypt(img4_bin, plain[i], out) != 0) {
+            log_error("stage_decrypt: img4 failed on '%s'\n", plain[i]);
             return -1;
         }
     }
 
-    /* iBEC / iBSS – decrypted via gastera1n_decrypt (handles GID key). */
     char ibec_dec[PATH_MAX], ibss_dec[PATH_MAX];
     snprintf(ibec_dec, sizeof(ibec_dec), "%s.dec", ctx->ibec);
     snprintf(ibss_dec, sizeof(ibss_dec), "%s.dec", ctx->ibss);
@@ -1232,18 +1078,11 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
     char shsh[PATH_MAX];
     snprintf(shsh, sizeof(shsh), "%s/latest.shsh2", ctx->staging);
 
-    if (access(shsh, F_OK) == 0) return 0;  /* already saved */
+    if (access(shsh, F_OK) == 0) return 0;
 
     char tss_bin[PATH_MAX];
     tool_path(TOOL_TSSCHECKER, tss_bin);
 
-    /*
-     * tsschecker writes .shsh2 files with non-deterministic names; we tell
-     * it to save into ctx->staging then locate the newest one below.
-     *
-     * exec_tool is used here because tsschecker takes simple flag arguments
-     * with no shell quoting concerns.
-     */
     int ret = exec_tool(tss_bin,
                         "-e", g_ecid,
                         "-d", g_product_type,
@@ -1256,7 +1095,6 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    /* Locate the newest .shsh2 and rename it to a canonical path. */
     char newest[PATH_MAX];
     if (find_newest_file(ctx->staging, ".shsh2", newest) != 0) {
         log_error("stage_get_shsh: no .shsh2 file found in '%s'\n", ctx->staging);
@@ -1271,29 +1109,22 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
 }
 
 /*
- * stage_patch_kernel – patch the decrypted kernelcache using the
- * Kernel64Patcher wrapper binary, then produce a binary diff for img4.
+ * stage_patch_kernel – patch the decrypted kernelcache with Kernel64Patcher,
+ * then produce a binary diff for the img4 stage.
  *
- * The wrapper automatically selects Kernel64Patcher (legacy) or
- * KPlooshFinder based on the iOS version detected in the kernelcache
- * image, and silently drops flags inappropriate for the selected tool
- * (see build_tool_argv() in the wrapper source).
+ * The wrapper selects Kernel64Patcher or KPlooshFinder based on the iOS
+ * version in the kernelcache and silently drops flags inapplicable to the
+ * detected tool.  Flags passed here cover the full iOS 15/16 surface:
  *
- * Flags passed here cover the full iOS 15/16 surface; the wrapper will
- * filter them to the correct subset at runtime:
- *
- *   -a   Patch AMFI (both iOS 15 and 16)
- *   -f   Patch AppleFirmwareUpdate img4 signature check (both)
- *   -t   Patch tfp0 (both)
- *   -d   Patch developer mode (both)
- *   -s   Patch SPUFirmwareValidation (iOS 15 only – dropped for iOS 16)
- *   -r   Patch RootVPNotAuthenticatedAfterMounting (iOS 15 only)
- *   -o   Patch could_not_authenticate_personalized_root_hash (iOS 15 only)
- *   -e   Patch root volume seal is broken (iOS 15 only)
- *   -u   Patch update_rootfs_rw (iOS 15 only)
- *
- * kerneldiff is left unchanged; it still diffs kdec → kpwn to produce
- * the binary patch file consumed by the img4 stage.
+ *   -a   AMFI (15 + 16)
+ *   -f   AppleFirmwareUpdate img4 sig check (15 + 16)
+ *   -t   tfp0 (15 + 16)
+ *   -d   developer mode (15 + 16)
+ *   -s   SPUFirmwareValidation (15 only)
+ *   -r   RootVPNotAuthenticatedAfterMounting (15 only)
+ *   -o   could_not_authenticate_personalized_root_hash (15 only)
+ *   -e   root volume seal is broken (15 only)
+ *   -u   update_rootfs_rw (15 only)
  */
 static int stage_patch_kernel(rdsk_ctx_t *ctx)
 {
@@ -1305,26 +1136,16 @@ static int stage_patch_kernel(rdsk_ctx_t *ctx)
     snprintf(kpwn, sizeof(kpwn), "%s.pwn",       ctx->kernelcache);
     snprintf(diff, sizeof(diff), "%s/kc.bpatch", ctx->staging);
 
-    /*
-     * Each flag is a separate argument to exec_tool — never pack them
-     * into a single string.  The wrapper's build_tool_argv() will drop
-     * any flag not valid for the detected iOS version.
-     */
     if (exec_tool(k64_bin, kdec, kpwn, "-a", NULL) != 0) {
         log_error("stage_patch_kernel: Kernel64Patcher failed\n");
         return -1;
     }
-
-    if (kerneldiff(kdec, kpwn, diff) != 0) return -1;
-    return 0;
+    return kerneldiff(kdec, kpwn, diff);
 }
 
 /*
  * patch_iboot – patch one iBoot image (iBEC or iBSS) with iBoot64Patcher.
- *
- * Extra flags for iBEC are passed as separate argv tokens, not as a single
- * pre-quoted string.  execv does not perform shell word-splitting, so each
- * flag must be its own argument.
+ * Each flag is a separate argv token; execv does not perform shell splitting.
  */
 static int patch_iboot(const char *path, bool is_ibec)
 {
@@ -1335,11 +1156,10 @@ static int patch_iboot(const char *path, bool is_ibec)
     snprintf(in,  sizeof(in),  "%s.dec", path);
     snprintf(out, sizeof(out), "%s.pwn", path);
 
-    if (is_ibec) {
+    if (is_ibec)
         return exec_tool(iboot_bin, in, out, "-n", "-b", "rd=md0 debug=0x2014e -v wdt=-1", NULL);
-    } else {
+    else
         return exec_tool(iboot_bin, in, out, NULL);
-    }
 }
 
 static int stage_patch_iboot(rdsk_ctx_t *ctx)
@@ -1356,22 +1176,14 @@ static int stage_patch_iboot(rdsk_ctx_t *ctx)
 
 /*
  * Patch the restored_external binary inside the mounted ramdisk.
- *
- * ldid2 -e captures entitlements to a plist, then ldid2 -M re-signs the
- * patched binary with those entitlements.  The plist capture is done via
- * shell_cmd_capture so we can write the output to a file ourselves without
- * relying on shell redirection.
+ * ldid2 -e captures entitlements, ldid2 -M re-signs the patched binary.
  */
 static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
 {
     char ldid2_bin[PATH_MAX];
     tool_path(TOOL_LDID2, ldid2_bin);
 
-    char re_src[PATH_MAX];   /* source binary from tool dir */
-    char hax[PATH_MAX];      /* patched copy in staging     */
-    char plist[PATH_MAX];    /* captured entitlements       */
-    char dst_bin[PATH_MAX];  /* target inside ramdisk       */
-
+    char re_src[PATH_MAX], hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
     snprintf(re_src,  sizeof(re_src),  "%s/restored_external",              g_tool_dir);
     snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",          ctx->staging);
     snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",         ctx->staging);
@@ -1382,7 +1194,6 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    /* Capture entitlements from the ramdisk binary. */
     char *ents = shell_cmd_capture("%s -e %s", ldid2_bin, dst_bin);
     if (!ents) {
         log_error("patch_restored_external: ldid2 -e failed\n");
@@ -1390,7 +1201,6 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    /* Write entitlements to plist file. */
     FILE *pf = fopen(plist, "w");
     if (!pf || fputs(ents, pf) == EOF) {
         log_error("patch_restored_external: failed to write plist\n");
@@ -1402,10 +1212,6 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     fclose(pf);
     free(ents);
 
-    /*
-     * Re-sign patched binary.  Build the -S<plist> flag as a separate
-     * heap string so it can be freed after the call.
-     */
     char *sflag = dup_printf("-S%s", plist);
     if (!sflag) {
         log_error("patch_restored_external: out of memory for -S flag\n");
@@ -1424,18 +1230,17 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
 
     if (file_copy(hax, dst_bin) != 0) {
         log_error("patch_restored_external: failed to copy patched binary "
-                  "to ramdisk ('%s' → '%s')\n", hax, dst_bin);
+                  "('%s' → '%s')\n", hax, dst_bin);
         unlink(hax);
         return -1;
     }
 
-    // chmod(2) directly — no shell, and works correctly under -owners off mounts
     if (chmod(dst_bin, 0755) != 0) {
         log_error("patch_restored_external: chmod dst_bin failed: %s\n", strerror(errno));
         unlink(hax);
         return -1;
     }
-    
+
     unlink(hax);
     return 0;
 }
@@ -1460,7 +1265,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     }
 
     char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
-    snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec",     ctx->ramdisk);
+    snprintf(rdsk_dec, sizeof(rdsk_dec), "%s.dec",      ctx->ramdisk);
     snprintf(rdsk_dmg, sizeof(rdsk_dmg), "%s/rdsk.dmg", ctx->staging);
 
     if (rename(rdsk_dec, rdsk_dmg) != 0) {
@@ -1470,13 +1275,12 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     if (shell_cmd("hdiutil resize -size 208MB '%s'", rdsk_dmg) != 0)
         return -1;
-
-    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s'",
-                  rdsk_dmg, ctx->mount) != 0)
+    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s'", rdsk_dmg, ctx->mount) != 0)
         return -1;
 
+    /* Wait up to ~5 s for the mount to become usable. */
     int mount_ready = 0;
-    for (int i = 0; i < 50; i++) {          /* up to ~5 s total */
+    for (int i = 0; i < 50; i++) {
         char probe[PATH_MAX];
         snprintf(probe, sizeof(probe), "%s/usr/local/bin", ctx->mount);
         struct stat pst;
@@ -1484,10 +1288,10 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
             mount_ready = 1;
             break;
         }
-        usleep(100000);                      /* 100 ms per poll */
+        usleep(100000);
     }
     if (!mount_ready) {
-        log_error("stage_build_ramdisk: ramdisk mount timed out — "
+        log_error("stage_build_ramdisk: mount timed out — "
                   "'/usr/local/bin' never appeared under '%s'\n", ctx->mount);
         shell_cmd("hdiutil detach -force '%s'", ctx->mount);
         return -1;
@@ -1498,14 +1302,24 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 #define RDSK_FAIL(msg, ...) \
     do { log_error(msg "\n", ##__VA_ARGS__); ret = -1; goto detach; } while (0)
 
-    if (file_write_line(
-            dup_printf("%s/etc/motd", ctx->mount), "WELCOME BACK!") != 0)
+    char *motd_path = dup_printf("%s/etc/motd", ctx->mount);
+    if (!motd_path || file_write_line(motd_path, "WELCOME BACK!") != 0) {
+        free(motd_path);
         RDSK_FAIL("stage_build_ramdisk: failed to write /etc/motd");
+    }
+    free(motd_path);
 
-    if (mkdir_p(dup_printf("%s/private/var/root", ctx->mount), 0755) != 0 ||
-        mkdir_p(dup_printf("%s/private/var/run",  ctx->mount), 0755) != 0 ||
-        mkdir_p(dup_printf("%s/sshd",             ctx->mount), 0755) != 0)
+    char *var_root = dup_printf("%s/private/var/root", ctx->mount);
+    char *var_run  = dup_printf("%s/private/var/run",  ctx->mount);
+    char *sshd_dir = dup_printf("%s/sshd",             ctx->mount);
+    if (!var_root || !var_run || !sshd_dir ||
+        mkdir_p(var_root, 0755) != 0 ||
+        mkdir_p(var_run,  0755) != 0 ||
+        mkdir_p(sshd_dir, 0755) != 0) {
+        free(var_root); free(var_run); free(sshd_dir);
         RDSK_FAIL("stage_build_ramdisk: failed to create required directories");
+    }
+    free(var_root); free(var_run); free(sshd_dir);
 
     if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf '%s'",
                   ctx->mount, ssh64_gz) != 0)
@@ -1516,7 +1330,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     if (patch_restored_external_in_ramdisk(ctx) != 0)
         RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
-    
+
     if (shell_cmd(
             "for d in"
             " '%1$s/bin'"
@@ -1538,11 +1352,6 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
             ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: cleanup pass failed");
 
-    /* Ensure everything in the ramdisk is owned root:wheel (uid=0, gid=0). 
-    if (shell_cmd("chown -Rh root:wheel '%s'", ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: chown root:wheel sweep failed");
-    */
-
 detach:
     for (int i = 0; i < 3; i++) {
         if (shell_cmd("hdiutil detach -force '%s'", ctx->mount) == 0) break;
@@ -1550,7 +1359,7 @@ detach:
     }
 
     if (ret != 0) {
-        unlink(rdsk_dmg);   /* remove partial output on failure */
+        unlink(rdsk_dmg);
         return -1;
     }
 
@@ -1576,72 +1385,58 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
     char img4_bin[PATH_MAX];
     tool_path(TOOL_IMG4, img4_bin);
 
-    /*
-     * Each img4 invocation is independent; run them sequentially via
-     * exec_tool so that arguments are never subject to shell splitting.
-     *
-     * Output paths (ctx->*_img4) now point into ctx->cache_dir so the
-     * built payloads land directly in the cache — no separate copy step
-     * is required.
-     */
-    struct {
-        const char *in;
-        const char *out;
-        const char *patch;   /* -P apply patch, or NULL */
-        const char *type;    /* -T argument */
-        bool        plain;   /* pass -A treat input as plain file flag */
-    } steps[] = {
-        { ctx->kernelcache,       ctx->kernelcache_img4, NULL /* set below */,  "rkrn", false },
-        { ctx->trustcache,        ctx->trustcache_img4,  NULL,                  "rtsc", false },
-        { NULL /* rdsk, set below */, ctx->ramdisk_img4, NULL,                  "rdsk", true  },
-        { ctx->devicetree,        ctx->devicetree_img4,  NULL,                  "rdtr", false },
-        { NULL /* bootim */,      ctx->bootim_img4,      NULL,                  "rlgo", true  },
-        { NULL /* ibec */,        ctx->ibec_img4,        NULL,                  "ibec", true  },
-        { NULL /* ibss */,        ctx->ibss_img4,        NULL,                  "ibss", true  },
-    };
-
-    /* Fill in paths that require runtime construction. */
+    /* Runtime-constructed paths filled in below the table. */
     char rdsk_dmg[PATH_MAX], ibec_pwn[PATH_MAX], ibss_pwn[PATH_MAX];
     char kc_patch[PATH_MAX], bootim_src[PATH_MAX];
 
-    snprintf(rdsk_dmg,   sizeof(rdsk_dmg),   "%s/rdsk.dmg",              ctx->staging);
-    snprintf(ibec_pwn,   sizeof(ibec_pwn),   "%s.pwn",                   ctx->ibec);
-    snprintf(ibss_pwn,   sizeof(ibss_pwn),   "%s.pwn",                   ctx->ibss);
-    snprintf(kc_patch,   sizeof(kc_patch),   "%s/kc.bpatch",             ctx->staging);
-    snprintf(bootim_src, sizeof(bootim_src), "%s/bootim@750x1334.im4p",  ctx->staging);
+    snprintf(rdsk_dmg,   sizeof(rdsk_dmg),   "%s/rdsk.dmg",             ctx->staging);
+    snprintf(ibec_pwn,   sizeof(ibec_pwn),   "%s.pwn",                  ctx->ibec);
+    snprintf(ibss_pwn,   sizeof(ibss_pwn),   "%s.pwn",                  ctx->ibss);
+    snprintf(kc_patch,   sizeof(kc_patch),   "%s/kc.bpatch",            ctx->staging);
+    snprintf(bootim_src, sizeof(bootim_src), "%s/bootim@750x1334.im4p", ctx->staging);
 
-    steps[0].patch = kc_patch;
-    steps[2].in    = rdsk_dmg;
-    steps[4].in    = bootim_src;
-    steps[5].in    = ibec_pwn;
-    steps[6].in    = ibss_pwn;
+    struct {
+        const char *in;
+        const char *out;
+        const char *patch;  /* -P patch file, or NULL */
+        const char *type;   /* -T tag */
+        bool        plain;  /* pass -A (plain input, no im4p wrapper) */
+    } steps[] = {
+        { ctx->kernelcache, ctx->kernelcache_img4, kc_patch, "rkrn", false },
+        { ctx->trustcache,  ctx->trustcache_img4,  NULL,     "rtsc", false },
+        { rdsk_dmg,         ctx->ramdisk_img4,     NULL,     "rdsk", true  },
+        { ctx->devicetree,  ctx->devicetree_img4,  NULL,     "rdtr", false },
+        { bootim_src,       ctx->bootim_img4,      NULL,     "rlgo", true  },
+        { ibec_pwn,         ctx->ibec_img4,        NULL,     "ibec", true  },
+        { ibss_pwn,         ctx->ibss_img4,        NULL,     "ibss", true  },
+    };
 
     for (size_t i = 0; i < sizeof(steps)/sizeof(steps[0]); i++) {
         int r;
         if (steps[i].patch) {
-            r =  exec_tool(img4_bin,
-                            "-i", steps[i].in,
-                            "-o", steps[i].out,
-                            "-P", steps[i].patch,
-                            "-M", ctx->im4m,
-                            "-T", steps[i].type,
-                            "-J",
-                            NULL);
+            r = exec_tool(img4_bin,
+                          "-i", steps[i].in,
+                          "-o", steps[i].out,
+                          "-P", steps[i].patch,
+                          "-M", ctx->im4m,
+                          "-T", steps[i].type,
+                          "-J",
+                          NULL);
+        } else if (steps[i].plain) {
+            r = exec_tool(img4_bin,
+                          "-i", steps[i].in,
+                          "-o", steps[i].out,
+                          "-M", ctx->im4m,
+                          "-A",
+                          "-T", steps[i].type,
+                          NULL);
         } else {
-            r = steps[i].plain
-                ? exec_tool(img4_bin,
-                            "-i", steps[i].in,
-                            "-o", steps[i].out,
-                            "-M", ctx->im4m,
-                            "-A",
-                            "-T", steps[i].type,
-                            NULL)
-                : exec_tool(img4_bin,
-                            "-i", steps[i].in,
-                            "-o", steps[i].out,
-                            "-M", ctx->im4m,
-                            "-T", steps[i].type,
-                            NULL);
+            r = exec_tool(img4_bin,
+                          "-i", steps[i].in,
+                          "-o", steps[i].out,
+                          "-M", ctx->im4m,
+                          "-T", steps[i].type,
+                          NULL);
         }
         if (r != 0) {
             log_error("stage_build_img4: img4 failed on step %zu (out=%s)\n",
@@ -1650,10 +1445,6 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
         }
     }
 
-    /*
-     * All img4 files written successfully.  Write the manifest sentinel so
-     * subsequent runs with ramdiskBootMode can use this cache directly.
-     */
     if (cache_mark_complete(ctx) != 0) {
         log_error("stage_build_img4: failed to write cache manifest\n");
         return -1;
@@ -1663,21 +1454,16 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
     return 0;
 }
 
-
-/* ═══════════════════════════════════════════════════════════════════════════
- * Stage: patch (top-level)
- * ═══════════════════════════════════════════════════════════════════════════ */
-
 static int stage_patch(rdsk_ctx_t *ctx)
 {
     log_info("Patching images...");
 
-    if (stage_ensure_tools()    != 0) return -1;
-    if (stage_get_shsh(ctx)     != 0) return -1;
-    if (stage_patch_kernel(ctx) != 0) return -1;
-    if (stage_patch_iboot(ctx)  != 0) return -1;
-    if (stage_build_ramdisk(ctx)!= 0) return -1;
-    if (stage_build_img4(ctx)   != 0) return -1;
+    if (stage_ensure_tools()     != 0) return -1;
+    if (stage_get_shsh(ctx)      != 0) return -1;
+    if (stage_patch_kernel(ctx)  != 0) return -1;
+    if (stage_patch_iboot(ctx)   != 0) return -1;
+    if (stage_build_ramdisk(ctx) != 0) return -1;
+    if (stage_build_img4(ctx)    != 0) return -1;
     return 0;
 }
 
@@ -1686,30 +1472,23 @@ static int stage_patch(rdsk_ctx_t *ctx)
  * Stage: boot
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/*
- * send_payload – send an img4 file and immediately issue the commit command.
- *
- * This helper makes the send→commit pairing explicit and ensures both steps
- * are logged consistently.  Returns 0 on success, -1 on failure.
- */
+/* Send an img4 file and immediately issue the commit command. */
 static int send_payload(const char *label,
                         const char *filepath,
                         const char *commit_cmd)
 {
     log_info("Sending %s...", label);
     if (dfu_send_file(filepath) != 0) {
-        log_error("stage_boot_ramdisk: failed to send %s ('%s')\n",
-                  label, filepath);
+        log_error("stage_boot_ramdisk: failed to send %s ('%s')\n", label, filepath);
         return -1;
     }
     if (dfu_send_cmd(commit_cmd) != 0) {
-        log_error("stage_boot_ramdisk: commit command '%s' failed "
-                  "after sending %s\n", commit_cmd, label);
+        log_error("stage_boot_ramdisk: commit command '%s' failed after sending %s\n",
+                  commit_cmd, label);
         return -1;
     }
     return 0;
 }
-
 
 static bool needs_go_cmd(uint32_t cpid)
 {
@@ -1717,33 +1496,28 @@ static bool needs_go_cmd(uint32_t cpid)
            cpid == 0x8011 || cpid == 0x8010;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * stage_boot_ramdisk
- * ═══════════════════════════════════════════════════════════════════════════ */
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
     uint32_t cpid = (uint32_t)strtoul(g_cpid, NULL, 16);
-
     log_info("Booting SSH ramdisk (cpid=0x%04X)...", cpid);
-    
+
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
     if (dfu_send_file(ctx->ibss_img4) != 0) {
         log_error("stage_boot_ramdisk: iBSS send failed\n");
         return -1;
     }
-    
     if (dfu_wait_ready(IBSS_INITIAL_DELAY_MS, DFU_RECONNECT_TIMEOUT_SECS, "iBSS send") != 0) {
         log_error("stage_boot_ramdisk: device never re-appeared after iBSS\n");
         return -1;
     }
+
     /* ── iBEC ────────────────────────────────────────────────────────── */
     log_info("Sending iBEC...");
     if (dfu_send_file(ctx->ibec_img4) != 0) {
         log_error("stage_boot_ramdisk: iBEC send failed\n");
         return -1;
     }
-
     if (needs_go_cmd(cpid)) {
         log_info("Sending go command...");
         if (dfu_send_cmd("go") != 0) {
@@ -1751,35 +1525,23 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
             return -1;
         }
     }
-
     if (dfu_wait_ready(IBEC_INITIAL_DELAY_MS, DFU_RECONNECT_TIMEOUT_SECS, "iBEC send") != 0) {
         log_error("stage_boot_ramdisk: device did not reconnect after iBEC\n");
         return -1;
     }
-    
+
     /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
-    if (dfu_send_file(ctx->bootim_img4)       != 0 ||
-        dfu_send_cmd("setpicture 0")         != 0 ||
-        dfu_send_cmd("bgcolor 0 0 0")      != 0)
+    if (dfu_send_file(ctx->bootim_img4) != 0 ||
+        dfu_send_cmd("setpicture 0")    != 0 ||
+        dfu_send_cmd("bgcolor 0 0 0")   != 0)
         log_warn("stage_boot_ramdisk: boot image setup failed (non-fatal)\n");
 
-    
-    /* ── Ramdisk ─────────────────────────────────────────────────────── */
-    if (send_payload("ramdisk", ctx->ramdisk_img4, "ramdisk") != 0)
-        return -1;
-    
-    /* ── Device tree ─────────────────────────────────────────────────── */
-    if (send_payload("device tree", ctx->devicetree_img4, "devicetree") != 0)
-        return -1;
-
-    /* ── Trust cache (chipset-conditional) ───────────────────────────── */
-    if (send_payload("trust cache", ctx->trustcache_img4, "firmware") != 0)
-            return -1;
-
-    /* ── Kernelcache ─────────────────────────────────────────────────── */
-    if (send_payload("kernelcache", ctx->kernelcache_img4, "bootx") != 0)
-        return -1;
+    /* ── Remaining payloads ──────────────────────────────────────────── */
+    if (send_payload("ramdisk",     ctx->ramdisk_img4,     "ramdisk")    != 0) return -1;
+    if (send_payload("device tree", ctx->devicetree_img4,  "devicetree") != 0) return -1;
+    if (send_payload("trust cache", ctx->trustcache_img4,  "firmware")   != 0) return -1;
+    if (send_payload("kernelcache", ctx->kernelcache_img4, "bootx")      != 0) return -1;
 
     log_info("Boot sequence complete — device is starting up.");
     return 0;
@@ -1791,7 +1553,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 int ideviceenterramdisk_load(void)
-{    
+{
     rdsk_ctx_t ctx;
     ctx_init(&ctx);
 
@@ -1799,22 +1561,14 @@ int ideviceenterramdisk_load(void)
         log_error("ideviceenterramdisk_load: no device in DFU mode\n");
         return -1;
     }
-    
     if (ensure_device_info() != 0) {
         log_error("ideviceenterramdisk_load: could not populate device info\n");
         return -1;
     }
-    
+
     /*
-     * ramdiskBootMode fast path – check the per-device cache first.
-     *
-     * cache_load_for_boot() with ECID+CPID, constructs
-     * the cache directory path, and verifies that all required img4 files
-     * are present and marked complete.  If the cache is valid we go
-     * straight to booting without any download/decrypt/patch work.
-     *
-     * If the cache is missing or incomplete we fall through to the full
-     * pipeline below, which will rebuild and repopulate the cache.
+     * ramdiskBootMode fast path — if a valid per-device cache exists,
+     * skip the full build pipeline and boot directly from cached payloads.
      */
     if (ramdiskBootMode) {
         if (cache_load_for_boot(&ctx) == 0)
