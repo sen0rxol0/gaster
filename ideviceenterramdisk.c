@@ -59,7 +59,7 @@
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
 /* Delays passed to dfu_wait_ready (milliseconds). */
-#define IBSS_INITIAL_DELAY_MS   2000u
+#define IBSS_INITIAL_DELAY_MS   3000u
 #define IBEC_INITIAL_DELAY_MS   3000u
 
 /* Reconnect poll budget (seconds). */
@@ -74,7 +74,6 @@
 
 /* Cache manifest file – presence signals a complete, valid cache entry. */
 #define CACHE_MANIFEST_NAME  ".complete"
-
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Global tool directory
@@ -98,6 +97,17 @@ static void tool_path(const char *name, char *out)
     snprintf(out, PATH_MAX, "%s/%s", g_tool_dir, name);
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Global cached device info
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Fetched once via ensure_device_info() and reused by all stages.
+ * All four values are populated atomically — either all valid or all empty.
+ */
+static char g_ecid[64];
+static char g_cpid[16];
+static char g_product_type[64];
+static char g_model[64];
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Native C file-system helpers
@@ -661,17 +671,8 @@ static void cache_invalidate(const rdsk_ctx_t *ctx)
  */
 static int cache_load_for_boot(rdsk_ctx_t *ctx)
 {
-    char *ecid = dfu_get_info("ecid");
-    char *cpid = dfu_get_info("cpid");
 
-    if (!ecid || !cpid) {
-        log_error("cache_load_for_boot: failed to read device info\n");
-        free(ecid); free(cpid);
-        return -1;
-    }
-
-    int ret = ctx_set_cache_dir(ctx, ecid, cpid);
-    free(ecid); free(cpid);
+    int ret = ctx_set_cache_dir(ctx, g_ecid, g_cpid);
     if (ret != 0) return -1;
 
     if (!cache_is_valid(ctx)) {
@@ -953,6 +954,41 @@ char *dfu_get_info(const char *key)
     return ctx.result;
 }
 
+/*
+ * ensure_device_info – populate the four globals from the device if not
+ * already done.  Safe to call multiple times; returns immediately on the
+ * second and subsequent calls.  Returns 0 on success, -1 on error.
+ */
+static int ensure_device_info(void)
+{
+    if (g_ecid[0] != '\0')
+        return 0;   /* already populated */
+
+    char *ecid  = dfu_get_info("ecid");
+    char *cpid  = dfu_get_info("cpid");
+    char *ptype = dfu_get_info("product_type");
+    char *model = dfu_get_info("model");
+
+    if (!ecid || !cpid || !ptype || !model) {
+        log_error("ensure_device_info: failed to retrieve device info "
+                  "(ecid=%s cpid=%s product_type=%s model=%s)\n",
+                  ecid   ? ecid   : "NULL",
+                  cpid   ? cpid   : "NULL",
+                  ptype  ? ptype  : "NULL",
+                  model  ? model  : "NULL");
+        free(ecid); free(cpid); free(ptype); free(model);
+        return -1;
+    }
+
+    snprintf(g_ecid,          sizeof(g_ecid),          "%s", ecid);
+    snprintf(g_cpid,          sizeof(g_cpid),          "%s", cpid);
+    snprintf(g_product_type,  sizeof(g_product_type),  "%s", ptype);
+    snprintf(g_model,         sizeof(g_model),         "%s", model);
+
+    free(ecid); free(cpid); free(ptype); free(model);
+    return 0;
+}
+
 /* Callback context for send_file. */
 typedef struct { const char *filepath; } send_file_ctx_t;
 
@@ -1141,44 +1177,22 @@ static int stage_ensure_tools(void)
 
 static int stage_prepare(rdsk_ctx_t *ctx)
 {
-    char *identifier = dfu_get_info("product_type");
-    if (!identifier) {
-        log_error("stage_prepare: could not get product type\n");
-        return -1;
-    }
-
     int found = 0;
     for (int i = 0; device_loaders[i].identifier; i++) {
-        if (!strcmp(device_loaders[i].identifier, identifier)) {
+        if (!strcmp(device_loaders[i].identifier, g_product_type)) {
             ctx->loader   = device_loaders[i];
             ctx->ipsw_url = (char *)ctx->loader.ipsw_url;
             found = 1;
             break;
         }
     }
-    free(identifier);
 
     if (!found) {
         log_error("stage_prepare: unsupported device\n");
         return -1;
     }
 
-    /*
-     * Derive and create the per-device cache directory now that we have
-     * enough device info.  The cache dir is established here (not in
-     * ctx_init) because it requires a device round-trip.
-     */
-    char *ecid = dfu_get_info("ecid");
-    char *cpid = dfu_get_info("cpid");
-
-    if (!ecid || !cpid) {
-        log_error("stage_prepare: could not get ecid/cpid for cache dir\n");
-        free(ecid); free(cpid);
-        return -1;
-    }
-
-    int cret = ctx_set_cache_dir(ctx, ecid, cpid);
-    free(ecid); free(cpid);
+    int cret = ctx_set_cache_dir(ctx, g_ecid, g_cpid);
     if (cret != 0) return -1;
 
     /*
@@ -1305,25 +1319,6 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
 
     if (access(shsh, F_OK) == 0) return 0;  /* already saved */
 
-    char *ecid  = dfu_get_info("ecid");
-    char *ptype = dfu_get_info("product_type");
-    char *model = dfu_get_info("model");
-
-    if (!ecid || !ptype || !model) {
-        /*
-         * Report precisely which fields were unavailable.  dfu_get_info()
-         * logs only at debug level for missing fields; we escalate to error
-         * here because tsschecker cannot run without all three.
-         */
-        log_error("stage_get_shsh: could not retrieve required device info "
-                  "(ecid=%s product_type=%s model=%s)\n",
-                  ecid   ? ecid   : "NULL",
-                  ptype  ? ptype  : "NULL",
-                  model  ? model  : "NULL");
-        free(ecid); free(ptype); free(model);
-        return -1;
-    }
-
     char tss_bin[PATH_MAX];
     tool_path(TOOL_TSSCHECKER, tss_bin);
 
@@ -1335,14 +1330,12 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
      * with no shell quoting concerns.
      */
     int ret = exec_tool(tss_bin,
-                        "-e", ecid,
-                        "-d", ptype,
-                        "-B", model,
+                        "-e", g_ecid,
+                        "-d", g_product_type,
+                        "-B", g_model,
                         "-b", "-l", "-s",
                         "--save-path", ctx->staging,
                         NULL);
-    free(ecid); free(ptype); free(model);
-
     if (ret != 0) {
         log_error("stage_get_shsh: tsschecker failed\n");
         return -1;
@@ -1814,13 +1807,7 @@ static bool needs_go_cmd(uint32_t cpid)
  * ═══════════════════════════════════════════════════════════════════════════ */
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
-    char *cpid_str = dfu_get_info("cpid");
-    if (!cpid_str) {
-        log_error("stage_boot_ramdisk: could not read cpid\n");
-        return -1;
-    }
-    uint32_t cpid = (uint32_t)strtoul(cpid_str, NULL, 16);
-    free(cpid_str);
+    uint32_t cpid = (uint32_t)strtoul(g_cpid, NULL, 16);
 
     log_info("Booting SSH ramdisk (cpid=0x%04X)...", cpid);
 
@@ -1895,6 +1882,11 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 
 int ideviceenterramdisk_load(void)
 {
+    if (ensure_device_info() != 0) {
+        log_error("ideviceenterramdisk_load: could not populate device info\n");
+        return -1;
+    }
+    
     rdsk_ctx_t ctx;
     ctx_init(&ctx);
 
