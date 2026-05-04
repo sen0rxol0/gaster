@@ -42,7 +42,6 @@
 #include "log.h"
 #include "ideviceenterramdisk.h"
 #include "ideviceloaders.h"
-#include "gastera1n.h"
 #include "kerneldiff.h"
 
 #include <plist/plist.h>
