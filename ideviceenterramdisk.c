@@ -1170,7 +1170,7 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",         ctx->staging);
     snprintf(dst_bin, sizeof(dst_bin), "%s/usr/local/bin/restored_external", ctx->mount);
 
-    if (access(re_bin, F_OK) != 0 && access(re_gz, F_OK) == 0) {
+    if (access(re_src, F_OK) != 0 && access(re_gz, F_OK) == 0) {
         if (gunzip_file(re_gz, re_src) != 0) {
             log_error("patch_restored_external: failed to decompress restored_external.gz\n");
             return -1;
