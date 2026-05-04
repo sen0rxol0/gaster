@@ -856,7 +856,7 @@ static int cb_get_all_info(irecv_client_t client, void *opaque)
     const struct irecv_device_info *devinfo = irecv_get_device_info(client);
     irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
-    irecv_reset(client);
+    //irecv_reset(client);
     
     if (!devinfo) return -1;
 
@@ -1741,6 +1741,12 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     log_info("Sending iBSS...");
     if (dfu_send_file(ctx->ibss_img4) != 0) {
         log_error("stage_boot_ramdisk: iBSS send failed\n");
+        return -1;
+    }
+    
+    log_info("Sending iBSS again...");
+    if (dfu_send_file(ctx->ibss_img4) != 0) {
+        log_error("stage_boot_ramdisk: iBSS double send failed\n");
         return -1;
     }
 
