@@ -782,9 +782,9 @@ static irecv_client_t dfu_open_client(void)
  * timeout_ms        – give up after this many ms (0 = poll forever).
  * context           – label used in log messages.
  *
- * Polls every 500 ms.  Returns 0 when a device is found, -1 on timeout.
+ * Polls every 1000 ms.  Returns 0 when a device is found, -1 on timeout.
  */
-#define POLL_INTERVAL_MS 500u
+#define POLL_INTERVAL_MS 1000u
 
 static int dfu_poll(unsigned int initial_delay_ms,
                     unsigned int timeout_ms,
