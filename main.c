@@ -60,8 +60,8 @@ int main(int argc, char **argv)
         switch (opt) {
         case 'h':
             puts("Optional arguments:\n"
-                 "  -t  Boot files from tmp directory\n"
-                 "  -d  Enable debug\n"
+                 "  -t  Boot with files from cache directory\n"
+                 "  -d  Enable debug logging\n"
                  "  -p  Run gaster");
             return 0;
         case 't':
