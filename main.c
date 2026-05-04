@@ -83,7 +83,7 @@ int main(int argc, char **argv)
         return -1;
     }
 
-    log_info("Device is now in pwned DFU mode");
+    log_info("Device is now in pwned DFU mode.");
     
     if (gastera1n_reset() != 0) {
         log_error("main: Failed to reset device USB after pwning\n");
