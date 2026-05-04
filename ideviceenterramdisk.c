@@ -790,7 +790,7 @@ static int dfu_poll(unsigned int initial_delay_ms,
                     unsigned int timeout_ms,
                     const char  *context)
 {
-    if (initial_delay_ms)
+    if (initial_delay_ms != 0)
         usleep(initial_delay_ms * 1000u);
 
     unsigned int elapsed_ms = 0;
@@ -928,7 +928,7 @@ static int cb_send_file(irecv_client_t client, void *opaque)
 
 int dfu_send_file(const char *filepath)
 {
-    if (dfu_wait_for_device() != 0) return -1;
+    //if (dfu_wait_for_device() != 0) return -1;
     send_file_ctx_t ctx = { filepath };
     return dfu_with_client(cb_send_file, &ctx);
 }
@@ -945,7 +945,7 @@ static int cb_send_cmd(irecv_client_t client, void *opaque)
 
 int dfu_send_cmd(const char *command)
 {
-    if (dfu_wait_for_device() != 0) return -1;
+    //if (dfu_wait_for_device() != 0) return -1;
     send_cmd_ctx_t ctx = { command };
     return dfu_with_client(cb_send_cmd, &ctx);
 }
