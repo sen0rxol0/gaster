@@ -56,7 +56,7 @@ int main(int argc, char **argv)
     puts("");
 
     int opt;
-    while ((opt = getopt(argc, argv, "htdp")) != -1) {
+    while ((opt = getopt(argc, argv, "hdpt")) != -1) {
         switch (opt) {
         case 'h':
             puts("Optional arguments:\n"
@@ -64,10 +64,6 @@ int main(int argc, char **argv)
                  "  -d  Enable debug logging\n"
                  "  -p  Run gaster");
             return 0;
-        case 't':
-            log_warn("%s\n", "Booting directly, skipping downloading and patching!");
-            ramdiskBootMode = true;
-            break;
         case 'd':
             log_warn("%s\n", "Debug is enabled!");
             DEBUG_ENABLED = true;
@@ -76,23 +72,27 @@ int main(int argc, char **argv)
             log_warn("%s\n", "Entering pwned DFU mode with gaster!");
             pwnDFUMode = true;
             break;
+        case 't':
+            log_warn("%s\n", "Booting directly, skipping downloading and patching!");
+            ramdiskBootMode = true;
+            break;
         default:
             break;
         }
     }
 
-    // FIX: the original code set ret = EXIT_SUCCESS then immediately
-    // overwrote it with gastera1n()'s return value — the intermediate
-    // assignment was dead.  Initialise directly from the call.
-    int ret = gastera1n();
-
-    if (!pwnDFUMode && ret == 0) {
+    int ret = 0;
+    
+    if (pwnDFUMode) {
+        ret = gastera1n();
         log_info("Device reached pwned DFU mode.");
+    } else {
         ret = ideviceenterramdisk_load();
-
-        if (ret == 0)
-            puts("DONE!");
+        log_info("Device reached SSH ramdisk mode.");
     }
+
+    if (ret == 0)
+        puts("DONE!");
 
     return ret;
 }
