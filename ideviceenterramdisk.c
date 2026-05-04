@@ -1487,14 +1487,12 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     uint32_t cpid = (uint32_t)strtoul(g_cpid, NULL, 16);
     log_info("Booting SSH ramdisk (cpid=0x%04X)...", cpid);
 
-    /*
     if (gastera1n_reset() != 0) {
-        log_error("Failed to reset device USB after pwning\n");
+        log_error("stage_boot_ramdisk: failed to reset USB before send\n");
         return -1;
     }
 
     sleep(1);
-    */
     
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
