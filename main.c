@@ -78,17 +78,24 @@ int main(int argc, char **argv)
         }
     }
 
-    int ret = gastera1n();
-
-    if (ret == 0) {
-        log_info("Device is now in pwned DFU mode.");
-        
-        if (!pwnDFUMode)
-            ret = ideviceenterramdisk_load();
-
-        if (ret == 0)
-            puts("DONE!");
+    if (gastera1n() != 0) {
+        log_error("main: Failed to put device in pwned DFU\n");
+        return -1;
     }
 
-    return ret;
+    log_info("Device is now in pwned DFU mode");
+    
+    if (gastera1n_reset() != 0) {
+        log_error("main: Failed to reset device USB after pwning\n");
+        return -1;
+    }
+    
+    if(!pwnDFUMode && ideviceenterramdisk_load() != 0) {
+        log_error("main: Failed to boot device into SSH ramdisk\n");
+        return -1;
+    }
+
+    puts("DONE!");
+
+    return 0;
 }
