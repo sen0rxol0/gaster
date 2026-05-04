@@ -59,8 +59,8 @@
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
 /* Delays passed to dfu_wait_ready (milliseconds). */
-#define IBSS_INITIAL_DELAY_MS   3000u
-#define IBEC_INITIAL_DELAY_MS   3000u
+#define IBSS_INITIAL_DELAY_MS   2000u
+#define IBEC_INITIAL_DELAY_MS   4000u
 
 /* Reconnect poll budget (seconds). */
 #define DFU_RECONNECT_TIMEOUT_SECS   5u
