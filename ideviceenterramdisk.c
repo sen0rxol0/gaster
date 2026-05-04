@@ -907,17 +907,8 @@ static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
  */
 static int ensure_tool(const char *name)
 {
-    char bin[PATH_MAX], gz[PATH_MAX];
+    char bin[PATH_MAX];
     tool_path(name, bin);
-    snprintf(gz, sizeof(gz), "%s.gz", bin);
-
-    if (access(gz, F_OK) == 0) {
-        log_info("Decompressing %s.gz", name);
-        if (gunzip_file(gz, bin) != 0) {
-            log_error("ensure_tool: failed to decompress '%s'\n", gz);
-            return -1;
-        }
-    }
 
     if (make_executable(bin) != 0) {
         log_error("ensure_tool: failed to make '%s' executable\n", bin);
@@ -933,18 +924,7 @@ static int stage_ensure_tools(void)
     if (ensure_tool(TOOL_IBOOT64PATCHER)  != 0) return -1;
     if (ensure_tool(TOOL_TSSCHECKER)      != 0) return -1;
     if (ensure_tool(TOOL_KERNEL64PATCHER) != 0) return -1;
-
-    /* restored_external is a data file alongside the tool binaries. */
-    char re_bin[PATH_MAX], re_gz[PATH_MAX];
-    snprintf(re_bin, sizeof(re_bin), "%s/restored_external",    g_tool_dir);
-    snprintf(re_gz,  sizeof(re_gz),  "%s/restored_external.gz", g_tool_dir);
-
-    if (access(re_bin, F_OK) != 0 && access(re_gz, F_OK) == 0) {
-        if (gunzip_file(re_gz, re_bin) != 0) {
-            log_error("stage_ensure_tools: failed to decompress restored_external.gz\n");
-            return -1;
-        }
-    }
+    
     return 0;
 }
 
@@ -1183,12 +1163,20 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     char ldid2_bin[PATH_MAX];
     tool_path(TOOL_LDID2, ldid2_bin);
 
-    char re_src[PATH_MAX], hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
+    char re_gz[PATH_MAX], re_src[PATH_MAX], hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
+    snprintf(re_gz,  sizeof(re_gz),  "%s/restored_external.gz", g_tool_dir);
     snprintf(re_src,  sizeof(re_src),  "%s/restored_external",              g_tool_dir);
     snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",          ctx->staging);
     snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",         ctx->staging);
     snprintf(dst_bin, sizeof(dst_bin), "%s/usr/local/bin/restored_external", ctx->mount);
 
+    if (access(re_bin, F_OK) != 0 && access(re_gz, F_OK) == 0) {
+        if (gunzip_file(re_gz, re_src) != 0) {
+            log_error("patch_restored_external: failed to decompress restored_external.gz\n");
+            return -1;
+        }
+    }
+    
     if (file_copy(re_src, hax) != 0) {
         log_error("patch_restored_external: failed to copy binary\n");
         return -1;
