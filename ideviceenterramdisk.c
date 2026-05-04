@@ -965,7 +965,8 @@ static int cb_send_file(irecv_client_t client, void *opaque)
 }
 
 int dfu_send_file(const char *filepath)
-{    
+{
+    if (dfu_wait_for_device() != 0) return -1;
     send_file_ctx_t ctx = { filepath };
     return dfu_with_client(cb_send_file, &ctx);
 }
@@ -981,7 +982,8 @@ static int cb_send_cmd(irecv_client_t client, void *opaque)
 }
 
 int dfu_send_cmd(const char *command)
-{    
+{
+    if (dfu_wait_for_device() != 0) return -1;
     send_cmd_ctx_t ctx = { command };
     return dfu_with_client(cb_send_cmd, &ctx);
 }
