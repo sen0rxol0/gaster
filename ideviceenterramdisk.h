@@ -14,13 +14,6 @@
 extern bool ramdiskBootMode;
 
 /*
- * ideviceenterramdisk_set_tool_dir – set the directory containing the
- * tool binaries (img4, ldid2, iBoot64Patcher, tsschecker, Kernel64Patcher).
- * Must be called before ideviceenterramdisk_load().
- */
-void ideviceenterramdisk_set_tool_dir(const char *dir);
-
-/*
  * ideviceenterramdisk_load – run the full ramdisk boot flow:
  *   prepare → download → decrypt → patch → boot
  *
@@ -52,8 +45,7 @@ int dfu_wait_for_device(void);
  * Returns 0 if the device responds, -1 on timeout.
  */
 int dfu_wait_ready(unsigned int initial_delay_ms,
-                   unsigned int timeout_secs,
-                   const char  *context);
+                   unsigned int timeout_secs);
 
 /*
  * dfu_send_file – upload a file to the device in DFU / recovery mode.
