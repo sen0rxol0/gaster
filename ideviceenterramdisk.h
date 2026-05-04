@@ -56,16 +56,6 @@ int dfu_wait_ready(unsigned int initial_delay_ms,
                    const char  *context);
 
 /*
- * dfu_get_info – query a named property from the connected DFU device.
- *
- * Recognised keys: "ecid", "cpid", "product_type", "model"
- *
- * Returns a heap-allocated string; caller must free().
- * Returns NULL if the device cannot be opened or the key is unknown.
- */
-char *dfu_get_info(const char *key);
-
-/*
  * dfu_send_file – upload a file to the device in DFU / recovery mode.
  * Returns 0 on success, -1 on error.
  */
