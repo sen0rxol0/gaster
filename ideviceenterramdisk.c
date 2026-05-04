@@ -1484,6 +1484,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: iBSS send failed\n");
         return -1;
     }
+    /* TODO: check if device is in Recovery before resending iBSS */
     if (dfu_send_file(ctx->ibss_img4) != 0) {
         log_error("stage_boot_ramdisk: iBSS send failed\n");
         return -1;
