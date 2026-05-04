@@ -40,6 +40,7 @@
 #endif
 
 #include "log.h"
+#include "gastera1n.h"
 #include "ideviceenterramdisk.h"
 #include "ideviceloaders.h"
 #include "kerneldiff.h"
