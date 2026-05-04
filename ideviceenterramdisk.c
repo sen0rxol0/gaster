@@ -856,7 +856,8 @@ static int cb_get_all_info(irecv_client_t client, void *opaque)
     const struct irecv_device_info *devinfo = irecv_get_device_info(client);
     irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
-
+    irecv_reset(client);
+    
     if (!devinfo) return -1;
 
     snprintf(g_ecid,         sizeof(g_ecid),         "0x%016llX", (unsigned long long)devinfo->ecid);
