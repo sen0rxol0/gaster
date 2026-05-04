@@ -8,8 +8,7 @@
  * ───────────────
  * img4 is built as part of this project and resolved at runtime via
  * g_tool_dir.  Companion pre-built tools (ldid2, iBoot64Patcher,
- * tsschecker, Kernel64Patcher) are expected in the same directory,
- * decompressed on first use by ensure_tool().
+ * tsschecker, Kernel64Patcher) are expected in the same directory.
  *
  * Shell usage
  * ───────────
@@ -902,7 +901,6 @@ static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
 
 /*
  * ensure_tool – verify the named tool binary exists and is executable.
- * Decompresses from a .gz sidecar if the plain binary is absent.
  * make_executable() also strips com.apple.quarantine on macOS.
  */
 static int ensure_tool(const char *name)
