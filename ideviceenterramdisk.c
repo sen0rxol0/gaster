@@ -780,6 +780,7 @@ static int cb_send_file(irecv_client_t client, void *opaque)
 
 int dfu_send_file(const char *filepath)
 {
+    sleep(1);
     send_file_ctx_t ctx = { filepath };
     return dfu_with_client(cb_send_file, &ctx);
 }
@@ -795,6 +796,7 @@ static int cb_send_cmd(irecv_client_t client, void *opaque)
 
 int dfu_send_cmd(const char *command)
 {
+    sleep(1);
     send_cmd_ctx_t ctx = { command };
     return dfu_with_client(cb_send_cmd, &ctx);
 }
@@ -1146,9 +1148,9 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     tool_path(TOOL_LDID2, ldid2_bin);
 
     char re_gz[PATH_MAX], re_src[PATH_MAX], hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
-    snprintf(re_gz,  sizeof(re_gz),  "%s/restored_external.gz", g_tool_dir);
-    snprintf(re_src,  sizeof(re_src),  "%s/restored_external",              g_tool_dir);
-    snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",          ctx->staging);
+    snprintf(re_gz,   sizeof(re_gz),   "%s/restored_external.gz",            g_tool_dir);
+    snprintf(re_src,  sizeof(re_src),  "%s/restored_external",               g_tool_dir);
+    snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",           ctx->staging);
     snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",         ctx->staging);
     snprintf(dst_bin, sizeof(dst_bin), "%s/usr/local/bin/restored_external", ctx->mount);
 
@@ -1475,8 +1477,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: failed to reset USB before send\n");
         return -1;
     }
-
-    sleep(1);
     
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
