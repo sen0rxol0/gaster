@@ -880,112 +880,40 @@ int dfu_wait_ready(unsigned int initial_delay_ms,
 {
     return dfu_poll(initial_delay_ms, timeout_secs * 1000u, context);
 }
-/*
- * dfu_get_info – return a heap-allocated string for the given device key.
- * Caller must free().  Returns NULL on error.
- */
 
-/* Dispatch table entry for dfu_get_info. */
-typedef struct {
-    const char *key;
-    char *(*extract)(const struct irecv_device_info *devinfo,
-                     irecv_device_t device);
-} dfu_info_entry_t;
-
-static char *extract_ecid(const struct irecv_device_info *d, irecv_device_t _)
+static int cb_get_all_info(irecv_client_t client, void *opaque)
 {
-    (void)_;
-    return dup_printf("0x%016llX", (unsigned long long)d->ecid);
-}
-static char *extract_cpid(const struct irecv_device_info *d, irecv_device_t _)
-{
-    (void)_;
-    return dup_printf("0x%04X", d->cpid);
-}
-static char *extract_product_type(const struct irecv_device_info *_, irecv_device_t dev)
-{
-    (void)_;
-    return (dev && dev->product_type) ? strdup(dev->product_type) : NULL;
-}
-static char *extract_model(const struct irecv_device_info *_, irecv_device_t dev)
-{
-    (void)_;
-    return (dev && dev->hardware_model) ? strdup(dev->hardware_model) : NULL;
-}
-
-static const dfu_info_entry_t k_info_table[] = {
-    { "ecid",         extract_ecid         },
-    { "cpid",         extract_cpid         },
-    { "product_type", extract_product_type },
-    { "model",        extract_model        },
-    { NULL, NULL }
-};
-
-/* Callback context for the get-info operation. */
-typedef struct {
-    const char *key;
-    char       *result; /* heap-allocated, caller frees */
-} get_info_ctx_t;
-
-static int cb_get_info(irecv_client_t client, void *opaque)
-{
-    get_info_ctx_t *ctx = opaque;
+    (void)opaque;
 
     const struct irecv_device_info *devinfo = irecv_get_device_info(client);
     irecv_device_t device = NULL;
     irecv_devices_get_device_by_client(client, &device);
 
-    for (int i = 0; k_info_table[i].key; i++) {
-        if (strcmp(k_info_table[i].key, ctx->key) == 0) {
-            ctx->result = k_info_table[i].extract(devinfo, device);
-            return (ctx->result) ? 0 : -1;
-        }
-    }
+    if (!devinfo) return -1;
 
-    log_error("dfu_get_info: unknown key '%s'\n", ctx->key);
-    return -1;
+    snprintf(g_ecid,         sizeof(g_ecid),         "0x%016llX", (unsigned long long)devinfo->ecid);
+    snprintf(g_cpid,         sizeof(g_cpid),         "0x%04X",    devinfo->cpid);
+
+    if (!device || !device->product_type || !device->hardware_model) return -1;
+
+    snprintf(g_product_type, sizeof(g_product_type), "%s", device->product_type);
+    snprintf(g_model,        sizeof(g_model),        "%s", device->hardware_model);
+
+    return 0;
 }
 
-char *dfu_get_info(const char *key)
-{
-    log_debug("Getting device info: %s\n", key);
-    get_info_ctx_t ctx = { .key = key, .result = NULL };
-    dfu_with_client(cb_get_info, &ctx);
-    return ctx.result;
-}
-
-/*
- * ensure_device_info – populate the four globals from the device if not
- * already done.  Safe to call multiple times; returns immediately on the
- * second and subsequent calls.  Returns 0 on success, -1 on error.
- */
 static int ensure_device_info(void)
 {
     if (g_ecid[0] != '\0')
-        return 0;   /* already populated */
+        return 0;
 
-    char *ecid  = dfu_get_info("ecid");
-    char *cpid  = dfu_get_info("cpid");
-    char *ptype = dfu_get_info("product_type");
-    char *model = dfu_get_info("model");
-
-    if (!ecid || !cpid || !ptype || !model) {
-        log_error("ensure_device_info: failed to retrieve device info "
-                  "(ecid=%s cpid=%s product_type=%s model=%s)\n",
-                  ecid   ? ecid   : "NULL",
-                  cpid   ? cpid   : "NULL",
-                  ptype  ? ptype  : "NULL",
-                  model  ? model  : "NULL");
-        free(ecid); free(cpid); free(ptype); free(model);
+    if (dfu_with_client(cb_get_all_info, NULL) != 0) {
+        log_error("ensure_device_info: failed to retrieve device info\n");
         return -1;
     }
 
-    snprintf(g_ecid,          sizeof(g_ecid),          "%s", ecid);
-    snprintf(g_cpid,          sizeof(g_cpid),          "%s", cpid);
-    snprintf(g_product_type,  sizeof(g_product_type),  "%s", ptype);
-    snprintf(g_model,         sizeof(g_model),         "%s", model);
-
-    free(ecid); free(cpid); free(ptype); free(model);
+    log_info("Device: %s (%s) ECID=%s CPID=%s",
+             g_product_type, g_model, g_ecid, g_cpid);
     return 0;
 }
 
