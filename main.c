@@ -89,6 +89,8 @@ int main(int argc, char **argv)
         log_error("main: Failed to reset device USB after pwning\n");
         return -1;
     }
+
+    sleep(1);
     
     if(!pwnDFUMode && ideviceenterramdisk_load() != 0) {
         log_error("main: Failed to boot device into SSH ramdisk\n");
