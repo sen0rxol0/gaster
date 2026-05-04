@@ -7,10 +7,9 @@
  * Tool resolution
  * ───────────────
  * img4 is built as part of this project and resolved at runtime via
- * g_tool_dir (set once by ideviceenterramdisk_set_tool_dir()).  The
- * companion pre-built tools (ldid2, iBoot64Patcher, tsschecker,
- * Kernel64Patcher) are expected in the same directory as img4,
- * decompressed on first use by ensure_tool().
+ * g_tool_dir.  The companion pre-built tools (ldid2, iBoot64Patcher,
+ * tsschecker, Kernel64Patcher) are expected in the same directory
+ * as img4, decompressed on first use by ensure_tool().
  *
  * Shell usage
  * ───────────
@@ -79,17 +78,7 @@
  * Global tool directory
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/*
- * Set once at start-up by the host application via
- * ideviceenterramdisk_set_tool_dir().  All tool paths are resolved
- * relative to this directory.
- */
 static char g_tool_dir[PATH_MAX] = ".";
-
-void ideviceenterramdisk_set_tool_dir(const char *dir)
-{
-    snprintf(g_tool_dir, sizeof(g_tool_dir), "%s", dir);
-}
 
 /* Build the absolute path for a named tool into out (size PATH_MAX). */
 static void tool_path(const char *name, char *out)
