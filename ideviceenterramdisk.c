@@ -1744,12 +1744,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
     
-    log_info("Sending iBSS again...");
-    if (dfu_send_file(ctx->ibss_img4) != 0) {
-        log_error("stage_boot_ramdisk: iBSS double send failed\n");
-        return -1;
-    }
-
     if (dfu_wait_ready(IBSS_INITIAL_DELAY_MS, DFU_RECONNECT_TIMEOUT_SECS, "iBSS send") != 0) {
         log_error("stage_boot_ramdisk: device never re-appeared after iBSS\n");
         return -1;
