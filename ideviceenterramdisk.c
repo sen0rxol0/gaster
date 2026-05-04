@@ -678,8 +678,7 @@ static irecv_client_t dfu_open_client(void)
  *
  * Returns 0 on success, -1 if the device was not found within timeout_secs.
  */
-static int dfu_poll(unsigned int initial_delay_ms,
-                    unsigned int timeout_secs)
+static int dfu_poll(unsigned int initial_delay_ms, unsigned int timeout_secs)
 {
     if (initial_delay_ms != 0)
         usleep(initial_delay_ms * 1000u);
@@ -688,7 +687,7 @@ static int dfu_poll(unsigned int initial_delay_ms,
         irecv_client_t client = dfu_open_client();
         if (client) {
             irecv_close(client);
-            log_info("Device ready within %u s.", (timeout_secs - i));
+            log_info("Device ready after %u s.", i + 1);
             return 0;
         }
  
@@ -699,6 +698,26 @@ static int dfu_poll(unsigned int initial_delay_ms,
     return -1;
 }
  
+/* Fixed delay, then up to timeout_secs 1-second probes. */
+int dfu_wait_ready(unsigned int initial_delay_ms, unsigned int timeout_secs)
+{
+    return dfu_poll(initial_delay_ms, timeout_secs);
+}
+
+/* Spin until any DFU/recovery device appears — no timeout. */
+int dfu_wait_for_device(void)
+{
+    log_info("Searching for DFU mode device...");
+    for (;;) {
+        irecv_client_t client = dfu_open_client();
+        if (client) {
+            irecv_close(client);
+            return 0;
+        }
+        sleep(1);
+    }
+}
+
 /* Callback type for dfu_with_client.  Must not close the client. */
 typedef int (*dfu_client_cb_t)(irecv_client_t client, void *ctx);
 
@@ -747,24 +766,6 @@ static int ensure_device_info(void)
     log_info("Device: %s (%s) ECID=%s CPID=%s",
              g_product_type, g_model, g_ecid, g_cpid);
     return 0;
-}
-
-/* Spin until any DFU/recovery device appears (no initial delay, no timeout). */
-int dfu_wait_for_device(void)
-{
-    log_info("Searching for DFU mode device...");
-    /* Poll indefinitely with a large timeout_secs ceiling. */
-    return dfu_poll(0, DFU_TIMEOUT_SECS + 5u);
-}
- 
-/*
- * dfu_wait_ready – fixed delay then up to timeout_secs probes, any mode.
- * Used after iBEC where any recovery mode is acceptable.
- */
-int dfu_wait_ready(unsigned int initial_delay_ms,
-                   unsigned int timeout_secs)
-{
-    return dfu_poll(initial_delay_ms, timeout_secs);
 }
 
 typedef struct { const char *filepath; } send_file_ctx_t;
