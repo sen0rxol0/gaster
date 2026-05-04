@@ -56,9 +56,9 @@
 #define MOUNT_DIR        STAGING_DIR "/dmg_mountpoint"
 #define CACHE_BASE_DIR   ".gastera1n_cache"
 
-#define IBSS_INITIAL_DELAY_MS       2000u
-#define IBEC_INITIAL_DELAY_MS       4000u
-#define DFU_RECONNECT_TIMEOUT_SECS  5u
+#define IBSS_INITIAL_DELAY_MS    2000u
+#define IBEC_INITIAL_DELAY_MS    4000u
+#define DFU_TIMEOUT_SECS         5u
 
 #define TOOL_IMG4            "img4"
 #define TOOL_LDID2           "ldid2"
@@ -673,52 +673,32 @@ static irecv_client_t dfu_open_client(void)
 }
 
 /*
- * dfu_poll – core polling primitive.
+ * dfu_poll – sleep initial_delay_ms, then probe up to timeout_secs times
+ * with a 1-second interval between each attempt.
  *
- * initial_delay_ms  sleep before the first probe (0 = immediate).
- * timeout_ms        give up after this many ms (0 = poll forever).
- * context           label used in log messages.
- *
- * Polls every 1000 ms.  Returns 0 when a device is found, -1 on timeout.
+ * Returns 0 on success, -1 if the device was not found within timeout_secs.
  */
-#define POLL_INTERVAL_MS 1000u
-
 static int dfu_poll(unsigned int initial_delay_ms,
-                    unsigned int timeout_ms,
-                    const char  *context)
+                    unsigned int timeout_secs)
 {
     if (initial_delay_ms != 0)
         usleep(initial_delay_ms * 1000u);
-
-    unsigned int elapsed_ms = 0;
-
-    for (;;) {
+ 
+    for (unsigned int i = 0; i < timeout_secs; i++) {
         irecv_client_t client = dfu_open_client();
         if (client) {
             irecv_close(client);
-            if (initial_delay_ms || timeout_ms)
-                log_info("Device ready after %s (%u ms).",
-                         context, elapsed_ms + initial_delay_ms);
+            log_info("Device ready within %u s.", (timeout_secs - i));
             return 0;
         }
-
-        if (timeout_ms && elapsed_ms >= timeout_ms) {
-            log_error("dfu_poll: device not found within %u ms after %s\n",
-                      timeout_ms, context);
-            return -1;
-        }
-
-        if (!timeout_ms && elapsed_ms % 5000u == 0)
-            log_info("Still waiting for DFU device... (%u s elapsed)",
-                     (elapsed_ms + initial_delay_ms) / 1000u);
-
-        usleep(POLL_INTERVAL_MS * 1000u);
-        elapsed_ms += POLL_INTERVAL_MS;
+ 
+        sleep(1);
     }
+ 
+    log_error("dfu_poll: device not found within %u s\n", timeout_secs);
+    return -1;
 }
-
-#undef POLL_INTERVAL_MS
-
+ 
 /* Callback type for dfu_with_client.  Must not close the client. */
 typedef int (*dfu_client_cb_t)(irecv_client_t client, void *ctx);
 
@@ -769,19 +749,22 @@ static int ensure_device_info(void)
     return 0;
 }
 
-/* Spin until any DFU/recovery device appears (no timeout). */
+/* Spin until any DFU/recovery device appears (no initial delay, no timeout). */
 int dfu_wait_for_device(void)
 {
     log_info("Searching for DFU mode device...");
-    return dfu_poll(0, 0, "device search");
+    /* Poll indefinitely with a large timeout_secs ceiling. */
+    return dfu_poll(0, DFU_TIMEOUT_SECS + 5u);
 }
-
-/* Wait for a device to re-enumerate after a send. */
+ 
+/*
+ * dfu_wait_ready – fixed delay then up to timeout_secs probes, any mode.
+ * Used after iBEC where any recovery mode is acceptable.
+ */
 int dfu_wait_ready(unsigned int initial_delay_ms,
-                   unsigned int timeout_secs,
-                   const char  *context)
+                   unsigned int timeout_secs)
 {
-    return dfu_poll(initial_delay_ms, timeout_secs * 1000u, context);
+    return dfu_poll(initial_delay_ms, timeout_secs);
 }
 
 typedef struct { const char *filepath; } send_file_ctx_t;
@@ -1500,7 +1483,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: iBSS send failed\n");
         return -1;
     }
-    if (dfu_wait_ready(IBSS_INITIAL_DELAY_MS, DFU_RECONNECT_TIMEOUT_SECS, "iBSS send") != 0) {
+    if (dfu_wait_ready(IBSS_INITIAL_DELAY_MS, DFU_TIMEOUT_SECS) != 0) {
         log_error("stage_boot_ramdisk: device never re-appeared after iBSS\n");
         return -1;
     }
@@ -1518,7 +1501,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
             return -1;
         }
     }
-    if (dfu_wait_ready(IBEC_INITIAL_DELAY_MS, DFU_RECONNECT_TIMEOUT_SECS, "iBEC send") != 0) {
+    if (dfu_wait_ready(IBEC_INITIAL_DELAY_MS, DFU_TIMEOUT_SECS) != 0) {
         log_error("stage_boot_ramdisk: device did not reconnect after iBEC\n");
         return -1;
     }
