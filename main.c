@@ -27,9 +27,6 @@ int main(int argc, char **argv)
     system("kill -STOP $(pgrep AMPDeviceDiscoveryAgent) 2>/dev/null");
 #endif
 
-    // FIX: the original code did `printf("%s\n", "text\n")` throughout,
-    // which printed two newlines (one from the literal, one from the format).
-    // Use puts() for plain string lines — it appends exactly one newline.
     puts("--==== gastera1n ====--");
     puts("// Super thanks to:");
     puts("//\thttps://github.com/0x7ff/gaster");
@@ -81,18 +78,17 @@ int main(int argc, char **argv)
         }
     }
 
-    int ret = 0;
-    
-    if (pwnDFUMode) {
-        ret = gastera1n();
-        log_info("Device reached pwned DFU mode.");
-    } else {
-        ret = ideviceenterramdisk_load();
-        log_info("Device reached SSH ramdisk mode.");
-    }
+    int ret = gastera1n();
 
-    if (ret == 0)
-        puts("DONE!");
+    if (ret == 0) {
+        log_info("Device is now in pwned DFU mode.");
+        
+        if (!pwnDFUMode)
+            ret = ideviceenterramdisk_load();
+
+        if (ret == 0)
+            puts("DONE!");
+    }
 
     return ret;
 }
