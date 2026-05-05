@@ -1468,34 +1468,30 @@ static bool needs_go_cmd(uint32_t cpid)
            cpid == 0x8011 || cpid == 0x8010;
 }
 
-/*
- * dfu_verify_mode – expect device to enumerate in mode.
- *
- * After iBSS is accepted the device resets and re-enumerates as
- * IRECV_K_RECOVERY_MODE_2 (PID 0x1281).  Verifying the mode change
- * confirms iBSS executed rather than just that a USB device appeared.
- *
- * Returns 0 when the expected mode is seen, -1 on timeout.
- */
 static int dfu_verify_mode(int expected_mode)
 {
-    /* Initial pause — let the device drop off USB. */
-    usleep(2000000);
+    for (unsigned int i = 0; i < 30; i++) {
+        usleep(500000); /* 500ms steps */
 
-    log_info("Verifying device mode (expecting 0x%04X)...", expected_mode);
+        irecv_client_t client = dfu_open_client();
+        if (!client) continue;
 
-    irecv_client_t client = dfu_open_client();
-
-    if (client) {
         int mode = 0;
         irecv_get_mode(client, &mode);
         irecv_close(client);
 
         if (mode == expected_mode) {
-            log_info("Mode verified: 0x%04X", mode);
+            log_info("Mode verified: 0x%04X", expected_mode);
             return 0;
         }
+
+        /* Wrong mode — device appeared but isn't where we expect */
+        log_error("dfu_verify_mode: got mode 0x%04X, expected 0x%04X\n",
+                  mode, expected_mode);
+        return -1;
     }
+
+    log_error("dfu_verify_mode: timed out waiting for mode 0x%04X\n", expected_mode);
     return -1;
 }
 
@@ -1516,7 +1512,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    /* Verify iBSS executed by confirming recovery mode transition. */
     if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2) != 0) {
         log_warn("iBSS did not execute — mode transition not observed\n");
         log_info("Resending iBSS...");
