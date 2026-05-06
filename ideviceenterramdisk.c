@@ -1470,7 +1470,7 @@ static bool needs_go_cmd(uint32_t cpid)
 
 static int dfu_verify_mode(int expected_mode)
 {
-    for (unsigned int i = 0; i < 30; i++) {
+    for (unsigned int i = 0; i < 6; i++) { /* 6 × 500 ms = 3 s */
         usleep(500000); /* 500ms steps */
 
         irecv_client_t client = dfu_open_client();
