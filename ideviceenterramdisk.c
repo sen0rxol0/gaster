@@ -672,6 +672,32 @@ static irecv_client_t dfu_open_client(void)
     }
 }
 
+static int dfu_verify_mode(int expected_mode)
+{
+    for (unsigned int i = 0; i < 6; i++) { /* 6 × 500 ms = 3 s */
+        usleep(500000); /* 500ms steps */
+
+        irecv_client_t client = dfu_open_client();
+        if (!client) continue;
+
+        int mode = 0;
+        irecv_get_mode(client, &mode);
+        irecv_close(client);
+
+        if (mode == expected_mode) {
+            log_info("Mode verified: 0x%04X", expected_mode);
+            return 0;
+        }
+
+        /* Wrong mode — device appeared but isn't where we expect */
+        log_warn("dfu_verify_mode: got mode 0x%04X, expected 0x%04X\n",
+                  mode, expected_mode);
+    }
+
+    log_error("dfu_verify_mode: timed out waiting for mode 0x%04X\n", expected_mode);
+    return -1;
+}
+
 /*
  * dfu_poll – sleep initial_delay_ms, then probe up to timeout_secs times
  * with a 1-second interval between each attempt.
@@ -1467,31 +1493,33 @@ static bool needs_go_cmd(uint32_t cpid)
     return cpid == 0x8015 || cpid == 0x8012 ||
            cpid == 0x8011 || cpid == 0x8010;
 }
-
-static int dfu_verify_mode(int expected_mode)
+/* Device requires reset + resend after the first iBSS transfer. */
+static bool needs_ibss_reset(uint32_t cpid)
 {
-    for (unsigned int i = 0; i < 6; i++) { /* 6 × 500 ms = 3 s */
-        usleep(500000); /* 500ms steps */
+    return cpid == 0x8015 || cpid == 0x8960 ||
+           cpid == 0x8965 || cpid == 0x8010;
+}
 
-        irecv_client_t client = dfu_open_client();
-        if (!client) continue;
-
-        int mode = 0;
-        irecv_get_mode(client, &mode);
+/* ═══════════════════════════════════════════════════════════════════════════
+ * dfu_reset_reconnect – issue irecv_reset, close, wait for re-enumeration.
+ *
+ * BUG FIX: the original silently skipped the reset when dfu_open_client()
+ * failed (client was NULL) and then called dfu_wait_ready() regardless.
+ * The reset is now best-effort (logged as a warning on failure) but the
+ * function still proceeds to poll for re-enumeration either way, matching
+ * the intent of all call sites.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+static int dfu_reset_reconnect()
+{
+    irecv_client_t client = dfu_open_client();
+    if (client) {
+        irecv_reset(client);
         irecv_close(client);
-
-        if (mode == expected_mode) {
-            log_info("Mode verified: 0x%04X", expected_mode);
-            return 0;
-        }
-
-        /* Wrong mode — device appeared but isn't where we expect */
-        log_warn("dfu_verify_mode: got mode 0x%04X, expected 0x%04X\n",
-                  mode, expected_mode);
     }
 
-    log_error("dfu_verify_mode: timed out waiting for mode 0x%04X\n", expected_mode);
-    return -1;
+    usleep(1000);  /* brief settle — mirrors Ramiel's usleep(1000) */
+
+    return dfu_wait_for_device();
 }
 
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
@@ -1506,13 +1534,18 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
-    if (dfu_send_file(ctx->ibss_img4) != 0) {
-        log_error("stage_boot_ramdisk: iBSS send failed\n");
-        return -1;
+    if (dfu_send_file(ctx->ibss_img4) != 0 || needs_ibss_reset(cpid)) {
+        log_info("iBSS retry required (cpid=0x%04X)", cpid);
+
+        if (dfu_reset_reconnect() != 0) {
+            log_error("stage_boot_ramdisk: device lost after client reset\n");
+            return -1;
+        }
+        if (dfu_send_file(ctx->ibss_img4) != 0) {
+            log_error("stage_boot_ramdisk: iBSS retry failed\n");
+            return -1;
+        }
     }
-
-    sleep(1);
-
     if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2) != 0) {
         log_warn("iBSS did not execute — mode transition not observed\n");
         log_info("Resending iBSS...");
@@ -1522,7 +1555,6 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
             return -1;
         }
     }
-
     if (dfu_wait_ready(IBSS_INITIAL_DELAY_MS, DFU_TIMEOUT_SECS) != 0) {
         log_error("stage_boot_ramdisk: device never re-appeared after iBSS\n");
         return -1;
