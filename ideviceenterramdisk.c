@@ -1527,10 +1527,10 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     uint32_t cpid = (uint32_t)strtoul(g_cpid, NULL, 16);
     log_info("Booting SSH ramdisk (cpid=0x%04X)...", cpid);
 
-    /*if (gastera1n_reset() != 0) {
-        log_error("stage_boot_ramdisk: failed to reset USB before send\n");
+    if (gastera1n_reset() != 0) {
+        log_error("stage_boot_ramdisk: failed to reset USB after pwn\n");
         return -1;
-    }*/
+    }
     
     /* ── iBSS ────────────────────────────────────────────────────────── */
     log_info("Sending iBSS...");
@@ -1541,14 +1541,16 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
             log_error("stage_boot_ramdisk: device lost after client reset\n");
             return -1;
         }
+        log_info("stage_boot_ramdisk: reset and reconnected...");
+        log_info("Resending iBSS...");
         if (dfu_send_file(ctx->ibss_img4) != 0) {
-            log_error("stage_boot_ramdisk: iBSS retry failed\n");
-            return -1;
+            log_warn("stage_boot_ramdisk: iBSS retry failed\n");
+            //return -1;
         }
     }
     if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2) != 0) {
         log_warn("iBSS did not execute — mode transition not observed\n");
-        log_info("Resending iBSS...");
+        log_info("Resend iBSS...");
         
         if (dfu_send_file(ctx->ibss_img4) != 0) {
             log_error("stage_boot_ramdisk: iBSS resend failed\n");
