@@ -1486,9 +1486,8 @@ static int dfu_verify_mode(int expected_mode)
         }
 
         /* Wrong mode — device appeared but isn't where we expect */
-        log_error("dfu_verify_mode: got mode 0x%04X, expected 0x%04X\n",
+        log_warn("dfu_verify_mode: got mode 0x%04X, expected 0x%04X\n",
                   mode, expected_mode);
-        return -1;
     }
 
     log_error("dfu_verify_mode: timed out waiting for mode 0x%04X\n", expected_mode);
@@ -1511,6 +1510,8 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         log_error("stage_boot_ramdisk: iBSS send failed\n");
         return -1;
     }
+
+    sleep(1);
 
     if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2) != 0) {
         log_warn("iBSS did not execute — mode transition not observed\n");
