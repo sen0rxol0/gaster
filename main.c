@@ -27,7 +27,7 @@ int main(int argc, char **argv)
     system("kill -STOP $(pgrep AMPDeviceDiscoveryAgent) 2>/dev/null");
 #endif
 
-    puts("--==== gastera1n ====--");
+    puts("--==== gastera1n v2.0 ====--");
     puts("// Super thanks to:");
     puts("//\thttps://github.com/0x7ff/gaster");
     puts("//\thttps://github.com/mineek/openra1n");
@@ -54,7 +54,8 @@ int main(int argc, char **argv)
     while ((opt = getopt(argc, argv, "hdpt")) != -1) {
         switch (opt) {
         case 'h':
-            puts("Optional arguments:\n"
+            puts("gastera1n v2.0\n"
+                 "Optional arguments:\n"
                  "  -t  Boot with files from cache directory\n"
                  "  -d  Enable debug logging\n"
                  "  -p  Run gaster");
