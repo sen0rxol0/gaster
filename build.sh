@@ -192,17 +192,17 @@ clone_sources() {
     git clone --quiet https://github.com/libimobiledevice/libplist.git
     git -C libplist checkout --quiet "c5a30e9267068436a75b5d00fcbf95cb9c1f4dcd"
 
+    # libusbmuxd – provides the iproxy TCP-tunnel tool.
+    # Pinned to the commit matching LIBUSBMUXD_VERSION above.
+    git clone --quiet https://github.com/libimobiledevice/libusbmuxd.git
+    git -C libusbmuxd checkout --quiet "ce98c346b7c1dc2a21faea4fd3f32c88e27ca2af"
+    
     # libirecovery – same rationale as libplist above.
     git clone --quiet https://github.com/libimobiledevice/libirecovery.git
     git -C libirecovery checkout --quiet "1b9d9c3cdd3ef2f38198a21c356352f13641482d"
 
     git clone --quiet https://github.com/xerub/img4lib.git
     git -C img4lib submodule update --init --recursive --quiet
-
-    # libusbmuxd – provides the iproxy TCP-tunnel tool.
-    # Pinned to the commit matching LIBUSBMUXD_VERSION above.
-    git clone --quiet https://github.com/libimobiledevice/libusbmuxd.git
-    git -C libusbmuxd checkout --quiet "3f9b584d5cde7cb0aef45e9f5a6378de7cb62ce6"
 
     stamp_set "${stamp}"
 }
