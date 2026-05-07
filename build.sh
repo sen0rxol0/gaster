@@ -13,18 +13,33 @@
 #     the release tree.
 #   • img4 is built from source (img4lib) and placed into the release tree
 #     directly from the per-arch sysroot.
+#   • iproxy is built from source (libusbmuxd) and placed into the release
+#     tree.  Its dependency chain (libimobiledevice-glue → libplist) is built
+#     as static archives and stays in the sysroot.
 #   • Companion pre-built tool archives (ldid2, iBoot64Patcher, tsschecker)
 #     are expected in ROOT_DIR with the naming convention described in
 #     stage_release_tree().
 #
 #
 # Usage:
-#   ./build.sh [TARGET_PLATFORM] [TARGET_ARCH]
+#   ./build.sh [TARGET_PLATFORM] [TARGET_ARCH] [--force-rebuild]
 #
 #   TARGET_PLATFORM : macos | linux          (default: macos)
 #   TARGET_ARCH     : arm64 | x86_64 | universal
 #                     macOS default: universal
 #                     Linux default: x86_64
+#
+# Incremental build caching:
+#   Completed phases leave a stamp file in the build root.  On subsequent
+#   runs the script skips any phase whose stamp is still valid, so only
+#   changed / not-yet-built phases run.  Pass --force-rebuild to wipe all
+#   stamps and start from scratch.
+#
+#   Stamp files:
+#     <build_root>/.stamp_sources  – git clone + checkout complete
+#     <build_root>/.stamp_libs     – static libraries built
+#     <build_root>/.stamp_img4     – img4 built
+#   (gastera1n itself has no stamp; it always re-links from cached .a files.)
 #
 # Environment overrides (all optional):
 #   WORK_ROOT    – scratch directory          (default: .build/<platform>-<arch>)
@@ -59,8 +74,33 @@ copy_tree() {
 }
 
 # ---------------------------------------------------------------------------
+# Stamp-file helpers
+#
+# stamp_ok  <file>  → returns 0 (true) when the stamp exists
+# stamp_set <file>  → touches the stamp
+# stamp_del <file>  → removes the stamp (if present)
+# ---------------------------------------------------------------------------
+stamp_ok()  { [[ -f "$1" ]]; }
+stamp_set() { touch "$1"; }
+stamp_del() { rm -f "$1"; }
+
+# ---------------------------------------------------------------------------
 # Globals
 # ---------------------------------------------------------------------------
+
+# Consume --force-rebuild from any position in the argument list, leaving
+# only positional parameters behind.
+FORCE_REBUILD=0
+_ARGS=()
+for _a in "$@"; do
+    if [[ "${_a}" == "--force-rebuild" ]]; then
+        FORCE_REBUILD=1
+    else
+        _ARGS+=("${_a}")
+    fi
+done
+set -- "${_ARGS[@]+"${_ARGS[@]}"}"
+
 TARGET_PLATFORM="${1:-macos}"
 TARGET_ARCH="${2:-}"
 
@@ -119,6 +159,13 @@ RPATH_SYSTEM="/usr/lib"
 # ---------------------------------------------------------------------------
 clone_sources() {
     local src_root="$1"
+    local stamp="${_BUILD_ROOT}/.stamp_sources"
+
+    if stamp_ok "${stamp}"; then
+        log "Sources already cloned – skipping (use --force-rebuild to re-clone)"
+        return 0
+    fi
+
     rm -rf "${src_root}"
     mkdir -p "${src_root}"
     cd "${src_root}"
@@ -147,6 +194,8 @@ clone_sources() {
 
     git clone --quiet https://github.com/xerub/img4lib.git
     git -C img4lib submodule update --init --recursive --quiet
+
+    stamp_set "${stamp}"
 }
 
 # ---------------------------------------------------------------------------
@@ -291,6 +340,13 @@ build_autotools() {
 
 build_static_libs() {
     local platform="$1"
+    local stamp="${_BUILD_ROOT}/.stamp_libs"
+
+    if stamp_ok "${stamp}"; then
+        log "Static libraries already built – skipping (use --force-rebuild to rebuild)"
+        return 0
+    fi
+
     local common_args=(--prefix="${PREFIX}" --host="${HOST_TRIPLE}")
 
     build_zlib
@@ -331,6 +387,8 @@ build_static_libs() {
     # Overwrite auto-generated .pc files with stubs that reflect the correct
     # Libs: line (sysroot -L so the linker finds the .a files).
     _inject_host_pc_stubs "${platform}"
+
+    stamp_set "${stamp}"
 }
 
 _inject_host_pc_stubs() {
@@ -406,18 +464,23 @@ EOF
 }
 
 build_img4() {
+    local stamp="${_BUILD_ROOT}/.stamp_img4"
+
+    if stamp_ok "${stamp}"; then
+        log "img4 already built – skipping (use --force-rebuild to rebuild)"
+        return 0
+    fi
+
     log "Building img4lib / img4 tool"
     cd "${_SRC_ROOT}/img4lib"
 
-    
     if [[ "${TARGET_PLATFORM}" == "macos" ]]; then
         local arch="$1"
         local SDK
         SDK="$(xcrun --sdk macosx --show-sdk-path)"
         local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -O2 -fPIC"
         local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -L${_SYSROOT}${PREFIX}/lib -Llzfse/build/bin"
-        # local ARCH_LDFLAGS="${LDFLAGS} -Llzfse/build/bin"
-        
+
         sed -i '' 's/^CFLAGS[[:space:]]*=[[:space:]]*-Wall -W -pedantic/CFLAGS = $(EXTRA_CFLAGS) -Wall -W -pedantic/' Makefile
 
         # Always rebuild lzfse from scratch for this arch so a prior
@@ -434,6 +497,8 @@ build_img4() {
 
     install -d "${_SYSROOT}${PREFIX}/bin"
     install -m 755 img4 "${_SYSROOT}${PREFIX}/bin/img4"
+
+    stamp_set "${stamp}"
 }
 
 build_gastera1n() {
@@ -628,10 +693,23 @@ build_single() {
 
     log "━━━ Build start: platform=${platform} arch=${arch} ━━━"
 
+    # Expose build_root to stamp helpers called from sub-functions
+    export _BUILD_ROOT="${build_root}"
     export _SYSROOT="${build_root}/sysroot"
     export _SRC_ROOT="${build_root}/src"
 
-    rm -rf "${build_root}"
+    # --force-rebuild: wipe all stamps so every phase runs from scratch.
+    # The sysroot and source tree are NOT wiped here — only the stamps are
+    # removed, which causes each phase to re-run and overwrite its outputs
+    # in place.  Use this when you want a clean rebuild without the cost of
+    # re-cloning sources.
+    if [[ "${FORCE_REBUILD}" == "1" ]]; then
+        log "  --force-rebuild: clearing stamps for ${platform}/${arch}"
+        stamp_del "${_BUILD_ROOT}/.stamp_sources"
+        stamp_del "${_BUILD_ROOT}/.stamp_libs"
+        stamp_del "${_BUILD_ROOT}/.stamp_img4"
+    fi
+
     mkdir -p "${_SYSROOT}${PREFIX}/lib" \
              "${_SYSROOT}${PREFIX}/bin" \
              "${_SYSROOT}${PREFIX}/include" \
@@ -711,6 +789,16 @@ merge_universal_release() {
 
 # ---------------------------------------------------------------------------
 # macOS universal top-level flow
+#
+# The arm64 and x86_64 single-arch builds are launched in parallel as
+# background jobs.  Each operates in its own WORK_ROOT subtree with
+# independent stamp files, sysroots, and source trees, so there is no
+# shared mutable state between them.  The script waits for both jobs before
+# proceeding to the lipo merge.
+#
+# If either job fails its exit status is captured via wait; the script then
+# aborts with a non-zero exit code so the caller (CI, Make, etc.) sees the
+# failure.
 # ---------------------------------------------------------------------------
 build_macos_universal() {
     local arm_build="${WORK_ROOT}/macos-arm64"
@@ -721,8 +809,21 @@ build_macos_universal() {
 
     install_macos_build_deps
 
-    build_single macos arm64  "${arm_build}" "${arm_release}"
-    build_single macos x86_64 "${x86_build}" "${x86_release}"
+    log "Launching arm64 and x86_64 builds in parallel"
+
+    build_single macos arm64  "${arm_build}" "${arm_release}" &
+    local pid_arm=$!
+
+    build_single macos x86_64 "${x86_build}" "${x86_release}" &
+    local pid_x86=$!
+
+    local rc=0
+
+    wait "${pid_arm}" || { warn "arm64 build failed (PID ${pid_arm})"; rc=1; }
+    wait "${pid_x86}" || { warn "x86_64 build failed (PID ${pid_x86})"; rc=1; }
+
+    [[ "${rc}" -eq 0 ]] || die "One or more arch builds failed – aborting universal merge"
+
     merge_universal_release "${arm_release}" "${x86_release}" "${univ_release}"
 
     local tarball="${univ_release}.tgz"
