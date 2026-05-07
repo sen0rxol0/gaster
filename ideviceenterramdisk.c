@@ -800,7 +800,7 @@ static int cb_send_file(irecv_client_t client, void *opaque)
 {
     const send_file_ctx_t *ctx = opaque;
     irecv_event_subscribe(client, IRECV_PROGRESS, &dfu_progress_cb, NULL);
-    irecv_error_t err = irecv_send_file(client, ctx->filepath, 0);
+    irecv_error_t err = irecv_send_file(client, ctx->filepath, 1);
     return (err == IRECV_E_SUCCESS) ? 0 : -1;
 }
 
