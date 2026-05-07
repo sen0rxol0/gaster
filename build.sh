@@ -872,21 +872,9 @@ build_macos_universal() {
 
     install_macos_build_deps
 
-    log "Launching arm64 and x86_64 builds in parallel"
-
-    build_single macos arm64  "${arm_build}" "${arm_release}" &
-    local pid_arm=$!
-
-    build_single macos x86_64 "${x86_build}" "${x86_release}" &
-    local pid_x86=$!
-
-    local rc=0
-
-    wait "${pid_arm}" || { warn "arm64 build failed (PID ${pid_arm})"; rc=1; }
-    wait "${pid_x86}" || { warn "x86_64 build failed (PID ${pid_x86})"; rc=1; }
-
-    [[ "${rc}" -eq 0 ]] || die "One or more arch builds failed – aborting universal merge"
-
+    build_single macos arm64  "${arm_build}" "${arm_release}"
+    build_single macos x86_64 "${x86_build}" "${x86_release}"
+    
     merge_universal_release "${arm_release}" "${x86_release}" "${univ_release}"
 
     local tarball="${univ_release}.tgz"
