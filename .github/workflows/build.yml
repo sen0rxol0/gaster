@@ -1,0 +1,262 @@
+name: Build gastera1n
+# Thanks palera1n-c. source: https://raw.githubusercontent.com/palera1n/palera1n-c/refs/heads/master/.github/workflows/build.yml
+# source: https://raw.githubusercontent.com/palera1n/palera1n/67805496f3395a086cd7782da6c59214e648ba2e/.github/workflows/build.yml
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-darwin:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            gnu_triple: x86_64-apple-darwin
+            os: macosx
+            minos: 10.13
+          - arch: arm64
+            gnu_triple: aarch64-apple-darwin
+            os: macosx
+            minos: 11.0
+    runs-on: macos-13
+    env:
+      MBEDTLS_VERSION: 3.5.2
+      READLINE_VERSION: 8.2
+      LIBIMOBILEDEVICE_COMMIT: ed0d66d0341562731bb19928dfe48155509fa7a7
+      LIBIRECOVERY_COMMIT: 7ce02c347b7c26e59498e6af31c9da51018d0fa1
+      LIBIMOBILEDEVICE_GLUE_COMMIT: 362f7848ac89b74d9dd113b38b51ecb601f76094
+      LIBPLIST_COMMIT: 2117b8fdb6b4096455bd2041a63e59a028120136
+      LIBUSBMUXD_COMMIT: a7f0543fb1ecb20ac7121c0fd77297200e0e43fc
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies (packages)
+        run: |
+          brew install make autoconf automake pkg-config gnu-sed
+          brew install libzip libtool
+          # curl -LO https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_v2.1.5_macosx_x86_64
+          # sudo install -m755 ldid_v2.1.5_macosx_x86_64 /usr/local/bin/ldid_v2.1.5
+
+      - name: Download dependencies (embedded binaries)
+        run: |
+          echo "SDK=$(xcrun -sdk ${{ matrix.os }} --show-sdk-path)" >> $GITHUB_ENV
+
+      - name: Download dependencies (source code)
+        run: |
+          git clone --depth=1 https://github.com/libimobiledevice/libplist
+          git clone --depth=1 https://github.com/libimobiledevice/libirecovery
+          git clone --depth=1 https://github.com/libimobiledevice/libimobiledevice-glue
+          git clone --depth=1 https://github.com/libimobiledevice/libimobiledevice
+          git clone --depth=1 https://github.com/libimobiledevice/libusbmuxd
+          cd libplist && git fetch origin ${{ env.LIBPLIST_COMMIT }} && git reset --hard ${{ env.LIBPLIST_COMMIT }} && cd ..
+          cd libirecovery && git fetch origin ${{ env.LIBIRECOVERY_COMMIT }} && git reset --hard ${{ env.LIBIRECOVERY_COMMIT }} && cd ..
+          cd libimobiledevice-glue && git fetch origin ${{ env.LIBIMOBILEDEVICE_GLUE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_GLUE_COMMIT }} && cd ..
+          cd libimobiledevice && git fetch origin ${{ env.LIBIMOBILEDEVICE_COMMIT }} && git reset --hard ${{ env.LIBIMOBILEDEVICE_COMMIT }} && cd ..
+          cd libusbmuxd && git fetch origin ${{ env.LIBUSBMUXD_COMMIT }} && git reset --hard ${{ env.LIBUSBMUXD_COMMIT }} && cd ..
+
+          # git clone https://github.com/curl/curl
+          git clone https://github.com/madler/zlib
+          git clone https://github.com/tihmstar/libgeneral
+          git clone https://github.com/tihmstar/libfragmentzip
+
+          curl -LOOOOOO \
+            "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${{ env.MBEDTLS_VERSION }}.tar.gz" \
+            "https://mirror-hk.koddos.net/gnu/readline/readline-${{ env.READLINE_VERSION }}.tar.gz"
+
+          tar -xf v${{ env.MBEDTLS_VERSION }}.tar.gz
+          tar -xf readline-${{ env.READLINE_VERSION }}.tar.gz
+
+      - name: Select correct Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.2.app
+
+      - name: Setup environment
+        run: |
+          echo "OUTPUT=gastera1n-${{ matrix.os }}-${{ matrix.arch }}" >> $GITHUB_ENV
+          echo "NCPU=$(sysctl -n hw.ncpu)" >> $GITHUB_ENV
+          echo "DESTDIR=$(pwd)/sysroot" >> $GITHUB_ENV
+          echo "PREFIX=/usr/local" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$(pwd)/sysroot/usr/local/lib/pkgconfig" >> $GITHUB_ENV
+          echo "CONFIGURE_ARGS=--prefix=/usr/local --disable-shared --enable-static --build=x86_64-apple-darwin --host=${{ matrix.gnu_triple }}" >> $GITHUB_ENV
+          echo "CC=$(xcrun --find cc)" >> $GITHUB_ENV
+          echo "CXX=$(xcrun --find c++)" >> $GITHUB_ENV
+          echo "CPP=$(xcrun --find cc) -E" >> $GITHUB_ENV
+          echo "CFLAGS=-g -Os -arch ${{ matrix.arch }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -isysroot ${{ env.SDK }} -isystem $(pwd)/sysroot/usr/local/include" >> $GITHUB_ENV
+          echo "CPPFLAGS=-g -Os -arch ${{ matrix.arch }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -isysroot ${{ env.SDK }} -isystem $(pwd)/sysroot/usr/local/include -Wno-error-implicit-function-declaration -Os" >> $GITHUB_ENV
+          echo "CXXFLAGS=-stdlib=libc++ -g -Os -isysroot ${{ env.SDK }} -arch ${{ matrix.arch }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -isystem $(pwd)/sysroot/usr/local/include -Os" >> $GITHUB_ENV
+          echo "LDFLAGS=-g -Wl,-dead_strip -arch ${{ matrix.arch }} -isysroot ${{ env.SDK }} -m${{ matrix.os }}-version-min=${{ matrix.minos }} -L$(pwd)/sysroot/usr/local/lib" >> $GITHUB_ENV
+          echo "CFLAGS_FOR_BUILD=-arch $(uname -m) -isysroot $(xcrun -sdk macosx --show-sdk-path) -Os" >> $GITHUB_ENV
+          echo "CXXFLAGS_FOR_BUILD=-stdlib=libc++ -arch $(uname -m) -isysroot $(xcrun -sdk macosx --show-sdk-path) -Os" >> $GITHUB_ENV
+          echo "CPPFLAGS_FOR_BUILD=-arch $(uname -m) -isysroot $(xcrun -sdk macosx --show-sdk-path) -Wno-error-implicit-function-declaration -Os" >> $GITHUB_ENV
+          echo "LDFLAGS_FOR_BUILD=-Wl,-dead_strip" >> $GITHUB_ENV
+          mkdir sysroot
+          mkdir -p $(pwd)/sysroot/usr/local/lib
+          ln -sf $(pwd)/sysroot/usr/local/lib{,64}
+
+      # - name: Build curl
+      #   run: |
+      #     cd curl
+      #     autoreconf -fiv
+      #     ./configure ${{ env.CONFIGURE_ARGS }} --with-openssl --without-libpsl
+      #     gmake -j$(sysctl -n hw.ncpu)
+      #     gmake -j$(sysctl -n hw.ncpu) install DESTDIR=${{ env.DESTDIR }}
+      #     cd ..
+
+      - name: Build libfragmentzip
+        run: |
+          ncpu=${{ env.NCPU }}
+          cd zlib
+          ./configure ${{ env.CONFIGURE_ARGS }}
+          gmake -j$ncpu
+          gmake -j$ncpu install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+          cd libgeneral
+          ./autogen.sh ${{ env.CONFIGURE_ARGS }}
+          gmake -j$ncpu
+          gmake -j$ncpu install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+          cd libfragmentzip
+          ./autogen.sh ${{ env.CONFIGURE_ARGS }}
+          gmake -j$ncpu
+          gmake -j$ncpu install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+
+      - name: Build libplist
+        run: |
+          cd libplist
+          autoreconf -fiv
+          ./configure ${{ env.CONFIGURE_ARGS }} --without-cython
+          gmake -j${{ env.NCPU }}
+          gmake -j${{ env.NCPU }} install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+
+      - name: Build libimobiledevice-glue
+        run: |
+          cd libimobiledevice-glue
+          autoreconf -fiv
+          ./configure ${{ env.CONFIGURE_ARGS }}
+          gmake -j${{ env.NCPU }}
+          gmake -j${{ env.NCPU }} install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+
+      - name: Build libirecovery
+        run: |
+          sudo cp -a sysroot/usr/local/* /usr/local
+          cd libirecovery
+          autoreconf -fiv
+
+          # if [ "${{ matrix.os }}" != "macosx" ]; then
+          #   gsed -i '/case kIOUSBTransactionTimeout/d' src/libirecovery.c
+          # fi
+
+          ./configure ${{ env.CONFIGURE_ARGS }}
+          echo -e 'all:\ninstall:' > tools/Makefile
+          make -j${{ env.NCPU }} LIBS="-lncurses"
+          make -j${{ env.NCPU }} install
+          install -m644 src/.libs/libirecovery-1.0.a ${{ env.DESTDIR }}${{ env.PREFIX }}/lib
+          cd ..
+
+      - name: Build libusbmuxd
+        run: |
+          cd libusbmuxd
+          autoreconf -fiv
+          ./configure ${{ env.CONFIGURE_ARGS }}
+          gmake -j${{ env.NCPU }}
+          gmake -j${{ env.NCPU }} install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+
+      - name: Build Mbed TLS
+        run: |
+          cd mbedtls-${{ env.MBEDTLS_VERSION }}
+          curl -LOOOOOO "https://raw.githubusercontent.com/palera1n/palera1n/76b2695e9d78230caa3d733e84ee87f2f458c976/patches/mbedtls/0001-Allow-empty-x509-cert-issuer.patch"
+          cat 0001-Allow-empty-x509-cert-issuer.patch | patch -sN -d . -p1
+          mkdir build
+          cd build
+          SDKROOT="${{ env.SDK }}" cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CROSSCOMPILING=true \
+            -DCMAKE_SYSTEM_NAME=Darwin \
+            -DCMAKE_C_COMPILER="${{ env.CC }}" \
+            -DCMAKE_C_FLAGS='${{ env.CFLAGS }}' \
+            -DCMAKE_FIND_ROOT_PATH="${{ env.DESTDIR }}" \
+            -DCMAKE_INSTALL_PREFIX="${{ env.PREFIX }}" \
+            -DMBEDTLS_PYTHON_EXECUTABLE="/usr/local/bin/python3" \
+            -DENABLE_TESTING=OFF \
+            -DENABLE_PROGRAMS=OFF \
+            -DMBEDTLS_FATAL_WARNINGS=OFF \
+            -DCMAKE_INSTALL_SYSCONFDIR="/etc"
+          gmake -j${{ env.NCPU }} SDKROOT="${{ env.SDK }}"
+          gmake -j${{ env.NCPU }} install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+
+      - name: Build readline
+        run: |
+          cd readline-${{ env.READLINE_VERSION }}
+          CC=clang CXX=clang++ ./configure ${{ env.CONFIGURE_ARGS }} ac_cv_type_sig_atomic_t=no
+          gmake -j${{ env.NCPU }}
+          gmake -j${{ env.NCPU }} install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+
+      - name: Build libimobiledevice
+        run: |
+          cd libimobiledevice
+          autoreconf -fiv
+          ./configure ${{ env.CONFIGURE_ARGS }} --with-mbedtls --enable-debug --disable-wireless-pairing
+          echo -e 'all:\ninstall:' > tools/Makefile
+          gmake -j${{ env.NCPU }}
+          gmake -j${{ env.NCPU }} install DESTDIR=${{ env.DESTDIR }}
+          cd ..
+
+      - name: Build gastera1n
+        run: |
+          gastera1n="${{ env.OUTPUT }}"
+          mkdir libs_root
+          cp -a sysroot/${{ env.PREFIX }}/{include,lib} libs_root
+          # find libs_root -name '*.dylib' -delete
+          # find libs_root -name '*.la' -delete
+          gmake -j${{ env.NCPU }}
+          mv gastera1n $gastera1n
+          # dsymutil $gastera1n
+          strip $gastera1n
+
+          # if [ "${{ matrix.os }}" == "macosx" ]; then
+            # ldid -S $gastera1n
+          # else
+            # ldid -Ssrc/usb.xml $gastera1n
+          # fi
+
+      - name: Prepare build for upload
+        run: |
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            mv iBoot64Patcher_macOS_arm64.gz iBoot64Patcher.gz
+            mv ldid_v2.1.5-procursus7_macosx_arm64.gz ldid2.gz
+          else
+            mv iBoot64Patcher_macOS_x86_64.gz iBoot64Patcher.gz
+            mv ldid_v2.1.5-procursus7_macosx_x86_64.gz ldid2.gz
+          fi
+
+          curl -LOOOOOO "https://github.com/xerub/img4lib/releases/download/1.0/img4lib-2020-10-27.tar.gz"
+          tar -xzf img4lib-2020-10-27.tar.gz
+          mv img4lib-2020-10-27/apple/img4 .
+          rm -rf img4lib-2020-10-27 img4lib-2020-10-27.tar.gz
+          gzip -9 -S .gz img4
+
+          mkdir ${{ env.OUTPUT }}_v1.0
+          cd ${{ env.OUTPUT }}_v1.0
+          # cp -a ../libs_root .
+          cp -v ../LICENSE ../restored_external.gz ../ssh64* ../bootim@750x1334.im4p .
+          cp -v ../img4.gz ../ldid2.gz ../iBoot64Patcher.gz ../tsschecker_macOS_v440.gz  .
+          cp -v ../${{ env.OUTPUT }} ./gastera1n
+          cd ..
+          tar -zcf ${{ env.OUTPUT }}_v1.0.tgz ${{ env.OUTPUT }}_v1.0
+
+      - name: Upload ${{ matrix.os }} thin ${{ matrix.arch }} build
+        uses: actions/upload-artifact@v4
+        with:
+          name: gastera1n-${{ matrix.os }}-${{ matrix.arch }}_v1.0.tgz
+          path: gastera1n-${{ matrix.os }}-${{ matrix.arch }}_v1.0.tgz
+          retention-days: 1
