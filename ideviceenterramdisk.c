@@ -1530,32 +1530,34 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     if (gastera1n_reset() != 0) {
         log_error("stage_boot_ramdisk: failed to reset USB after pwn\n");
         return -1;
-    }
-    
+    }    
     /* ── iBSS ────────────────────────────────────────────────────────── */
-    log_info("Sending iBSS...");
-    if (dfu_send_file(ctx->ibss_img4) != 0 || needs_ibss_reset(cpid)) {
-        log_info("iBSS retry required (cpid=0x%04X)", cpid);
+    bool is_recovery_mode = false;
+    for (int attempt = 0; attempt <= 3 && !is_recovery_mode; attempt++) {
+        log_info("Sending iBSS (attempt %d/3)...", attempt + 1);
+        dfu_send_file(ctx->ibss_img4);
 
-        if (dfu_reset_reconnect() != 0) {
-            log_error("stage_boot_ramdisk: device lost after client reset\n");
-            return -1;
+        /* cpid-specific reset: always required regardless of send result. */
+        if (needs_ibss_reset(cpid)) {
+            log_info("iBSS cpid reset required (cpid=0x%04X)...", cpid);
+            if (dfu_reset_reconnect() != 0) {
+                log_error("stage_boot_ramdisk: device lost after cpid reset\n");
+                return -1;
+            }
+            log_info("Reconnected — resending iBSS...");
+            dfu_send_file(ctx->ibss_img4);
         }
-        log_info("stage_boot_ramdisk: reset and reconnected...");
-        log_info("Resending iBSS...");
-        if (dfu_send_file(ctx->ibss_img4) != 0) {
-            log_warn("stage_boot_ramdisk: iBSS retry failed\n");
-            //return -1;
+
+        if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2) == 0) {
+            is_recovery_mode = true;
+        } else {
+            log_warn("iBSS mode transition not observed (attempt %d/3)\n", attempt + 1);
         }
     }
-    if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2) != 0) {
-        log_warn("iBSS did not execute — mode transition not observed\n");
-        log_info("Resend iBSS...");
-        
-        if (dfu_send_file(ctx->ibss_img4) != 0) {
-            log_error("stage_boot_ramdisk: iBSS resend failed\n");
-            return -1;
-        }
+
+    if (!is_recovery_mode) {
+        log_error("stage_boot_ramdisk: iBSS failed to execute after 3 attempts\n");
+        return -1;
     }
     if (dfu_wait_ready(IBSS_INITIAL_DELAY_MS, DFU_TIMEOUT_SECS) != 0) {
         log_error("stage_boot_ramdisk: device never re-appeared after iBSS\n");
