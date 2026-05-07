@@ -1254,7 +1254,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     snprintf(ssh64_gz, sizeof(ssh64_gz), "%s/ssh64.tar.gz", g_tool_dir);
 
     if (access(ssh64_gz, F_OK) != 0) {
-        if (shell_cmd("cat '%s'/ssh64.tar.gz_* > '%s'", g_tool_dir, ssh64_gz) != 0)
+        if (shell_cmd("cat \"%s\"/ssh64.tar.gz_* > \"%s\"", g_tool_dir, ssh64_gz) != 0)
             return -1;
 
         struct stat st;
