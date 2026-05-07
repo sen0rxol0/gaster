@@ -13,9 +13,9 @@
 #     the release tree.
 #   • img4 is built from source (img4lib) and placed into the release tree
 #     directly from the per-arch sysroot.
-#   • iproxy is built from source (libusbmuxd) and placed into the release
-#     tree.  Its dependency chain (libimobiledevice-glue → libplist) is built
-#     as static archives and stays in the sysroot.
+#   • iproxy is built from source (libusbmuxd 2.0.2) and placed into the
+#     release tree.  Its only non-system dependency (libplist) is already
+#     present in the sysroot from the static-libs phase.
 #   • Companion pre-built tool archives (ldid2, iBoot64Patcher, tsschecker)
 #     are expected in ROOT_DIR with the naming convention described in
 #     stage_release_tree().
@@ -39,6 +39,7 @@
 #     <build_root>/.stamp_sources  – git clone + checkout complete
 #     <build_root>/.stamp_libs     – static libraries built
 #     <build_root>/.stamp_img4     – img4 built
+#     <build_root>/.stamp_iproxy   – iproxy (libusbmuxd) built
 #   (gastera1n itself has no stamp; it always re-links from cached .a files.)
 #
 # Environment overrides (all optional):
@@ -133,6 +134,9 @@ GASTER_VERSION="v1.0"
 LIBPLIST_VERSION="2.2.0"
 LIBIRECOVERY_VERSION="1.0.0"
 
+# libusbmuxd version built from source
+LIBUSBMUXD_VERSION="2.0.2"
+
 # ---------------------------------------------------------------------------
 # rpath constants
 #
@@ -194,6 +198,11 @@ clone_sources() {
 
     git clone --quiet https://github.com/xerub/img4lib.git
     git -C img4lib submodule update --init --recursive --quiet
+
+    # libusbmuxd – provides the iproxy TCP-tunnel tool.
+    # Pinned to the commit matching LIBUSBMUXD_VERSION above.
+    git clone --quiet https://github.com/libimobiledevice/libusbmuxd.git
+    git -C libusbmuxd checkout --quiet "3f9b584d5cde7cb0aef45e9f5a6378de7cb62ce6"
 
     stamp_set "${stamp}"
 }
@@ -501,6 +510,49 @@ build_img4() {
     stamp_set "${stamp}"
 }
 
+build_iproxy() {
+    local stamp="${_BUILD_ROOT}/.stamp_iproxy"
+
+    if stamp_ok "${stamp}"; then
+        log "iproxy already built – skipping (use --force-rebuild to rebuild)"
+        return 0
+    fi
+
+    # -----------------------------------------------------------------------
+    # libusbmuxd:
+    #   The package ships both a shared library and the iproxy / inetcat
+    #   tools.  We want only the iproxy binary, so we build the full package
+    #   (static lib + tools) and install into the sysroot, then copy just the
+    #   iproxy executable out from there during staging.
+    #
+    #   configure flags:
+    #     --disable-shared   – no .dylib/.so needed at runtime (tool is
+    #                          statically linked against usbmuxd)
+    #     --enable-static    – produce the .a for link-time resolution
+    #
+    #   iproxy depends on:
+    #     libplist-2.0       (already in sysroot from build_static_libs)
+    # -----------------------------------------------------------------------
+    log "Building libusbmuxd ${LIBUSBMUXD_VERSION} (iproxy)"
+    build_autotools "${_SRC_ROOT}/libusbmuxd" \
+        --prefix="${PREFIX}" \
+        --host="${HOST_TRIPLE}" \
+        --disable-shared \
+        --enable-static
+
+    # iproxy is installed to <sysroot>/usr/local/bin/iproxy by build_autotools
+    [[ -x "${_SYSROOT}${PREFIX}/bin/iproxy" ]] \
+        || die "iproxy binary not found after libusbmuxd build"
+
+    if [[ "${TARGET_PLATFORM}" == "macos" ]]; then
+        fix_macos_rpath "${_SYSROOT}${PREFIX}/bin/iproxy"
+    else
+        fix_linux_strip "${_SYSROOT}${PREFIX}/bin/iproxy"
+    fi
+
+    stamp_set "${stamp}"
+}
+
 build_gastera1n() {
     log "Building gastera1n"
     cd "${ROOT_DIR}"
@@ -632,6 +684,7 @@ _install_companion_tools() {
 #   <release>/
 #     gastera1n
 #     img4
+#     iproxy
 #     ldid2
 #     iBoot64Patcher
 #     tsschecker
@@ -658,6 +711,14 @@ stage_release_tree() {
         install -m 755 "${img4_bin}" "${release_dir}/img4"
     else
         warn "img4 binary not found in sysroot -- skipping"
+    fi
+
+    # iproxy – built from libusbmuxd, flat alongside gastera1n
+    local iproxy_bin="${_SYSROOT}${PREFIX}/bin/iproxy"
+    if [[ -x "${iproxy_bin}" ]]; then
+        install -m 755 "${iproxy_bin}" "${release_dir}/iproxy"
+    else
+        warn "iproxy binary not found in sysroot -- skipping"
     fi
 
     # Pre-built companion tools – decompressed, flat, no arch/platform suffix
@@ -708,6 +769,7 @@ build_single() {
         stamp_del "${_BUILD_ROOT}/.stamp_sources"
         stamp_del "${_BUILD_ROOT}/.stamp_libs"
         stamp_del "${_BUILD_ROOT}/.stamp_img4"
+        stamp_del "${_BUILD_ROOT}/.stamp_iproxy"
     fi
 
     mkdir -p "${_SYSROOT}${PREFIX}/lib" \
@@ -726,6 +788,7 @@ build_single() {
 
     build_static_libs "${platform}"
     build_img4 "${arch}"
+    build_iproxy
     build_gastera1n
 
     local artifact_bin="${build_root}/artifacts/gastera1n"
