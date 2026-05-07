@@ -1532,8 +1532,8 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     
     /* ── iBSS ────────────────────────────────────────────────────────── */
     bool is_recovery_mode = false;
-    for (int attempt = 0; attempt <= 3 && !is_recovery_mode; attempt++) {
-        log_info("Sending iBSS (attempt %d/3)...", attempt + 1);
+    for (int a = 1; a <= 3 && !is_recovery_mode; a++) {
+        log_info("Sending iBSS (attempt %d/3)...", a);
         dfu_send_file(ctx->ibss_img4);
 
         /* cpid-specific reset: always required regardless of send result. */
@@ -1550,7 +1550,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
         if (dfu_verify_mode(IRECV_K_RECOVERY_MODE_2) == 0) {
             is_recovery_mode = true;
         } else {
-            log_warn("iBSS mode transition not observed (attempt %d/3)\n", attempt + 1);
+            log_warn("iBSS mode transition not observed (attempt %d/3)\n", a);
         }
     }
 
