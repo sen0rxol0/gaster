@@ -128,7 +128,7 @@ WORK_ROOT="${WORK_ROOT:-${ROOT_DIR}/.build/${TARGET_PLATFORM}-${TARGET_ARCH}}"
 DIST_ROOT="${DIST_ROOT:-${ROOT_DIR}/dist}"
 
 # Version string embedded in release directory names
-GASTER_VERSION="v1.0"
+GASTER_VERSION="v2.0"
 
 # libplist / libirecovery versions the host application ships
 LIBPLIST_VERSION="2.2.0"
