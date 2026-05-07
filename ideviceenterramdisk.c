@@ -1055,6 +1055,9 @@ static int stage_decrypt(rdsk_ctx_t *ctx)
 
     if (gastera1n_decrypt(ctx->ibec, ibec_dec) != 0) return -1;
     if (gastera1n_decrypt(ctx->ibss, ibss_dec) != 0) return -1;
+    if (gastera1n_reset() != 0)
+        log_warn("stage_decrypt: failed to reset after pwn\n");
+    
     return 0;
 }
 
@@ -1526,11 +1529,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
     uint32_t cpid = (uint32_t)strtoul(g_cpid, NULL, 16);
     log_info("Booting SSH ramdisk (cpid=0x%04X)...", cpid);
-
-    if (gastera1n_reset() != 0) {
-        log_error("stage_boot_ramdisk: failed to reset USB after pwn\n");
-        return -1;
-    }    
+    
     /* ── iBSS ────────────────────────────────────────────────────────── */
     bool is_recovery_mode = false;
     for (int attempt = 0; attempt <= 3 && !is_recovery_mode; attempt++) {
