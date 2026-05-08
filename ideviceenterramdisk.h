@@ -21,9 +21,14 @@ extern bool ramdiskBootMode;
  * prepare/download/patch stages are skipped and the device is booted
  * directly from the cached payloads.
  *
+ * cache_dir_override – when non-NULL and ramdiskBootMode is true, this
+ * path is used as the cache directory directly instead of the default
+ * per-device path derived from ECID and CPID.  Ignored when
+ * ramdiskBootMode is false.
+ *
  * Returns 0 on success, -1 on any failure.
  */
-int ideviceenterramdisk_load(void);
+int ideviceenterramdisk_load(const char *cache_dir_override);
 
 /* ── DFU / irecovery helpers ──────────────────────────────────────────── */
 
