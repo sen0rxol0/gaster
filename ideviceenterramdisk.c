@@ -495,14 +495,22 @@ static void ctx_init(rdsk_ctx_t *ctx)
 }
 
 /*
- * ctx_set_cache_dir – derive cache_dir from ecid/cpid and redirect all
- * img4 and im4m fields into it so stage_build_img4() writes directly there.
+ * ctx_set_cache_dir – derive cache_dir from ecid/cpid
+ * or explicit user-supplied
+ * path and redirect all img4 / im4m fields into it.  The directory is
+ * created if it does not already exist.
  */
-static int ctx_set_cache_dir(rdsk_ctx_t *ctx)
+static int ctx_set_cache_dir(rdsk_ctx_t *ctx, const char *path_override)
 {
-    snprintf(ctx->cache_dir, sizeof(ctx->cache_dir),
-             "%s/%s_%s", CACHE_BASE_DIR, g_ecid, g_cpid);
 
+    if (path_override != NULL) {
+        snprintf(ctx->cache_dir, sizeof(ctx->cache_dir),
+            "%s/gastera1n/%s_%s", path_override, g_ecid, g_cpid);
+    } else {
+        snprintf(ctx->cache_dir, sizeof(ctx->cache_dir),
+             "%s/%s_%s", CACHE_BASE_DIR, g_ecid, g_cpid);
+    }
+    
     if (mkdir_p(ctx->cache_dir, 0755) != 0) {
         log_error("ctx_set_cache_dir: failed to create '%s': %s\n",
                   ctx->cache_dir, strerror(errno));
@@ -523,10 +531,9 @@ static int ctx_set_cache_dir(rdsk_ctx_t *ctx)
 
 #undef CACHE
 
-    log_info("Device cache directory: %s", ctx->cache_dir);
+    log_info("Using cache directory: %s", ctx->cache_dir);
     return 0;
 }
-
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Device cache helpers
@@ -585,12 +592,19 @@ static void cache_invalidate(const rdsk_ctx_t *ctx)
 }
 
 /*
- * cache_load_for_boot – populate cache_dir and verify a valid cache exists.
- * Returns 0 on cache hit, -1 on miss or if device info is unavailable.
+ * cache_load_for_boot – set up cache_dir (from override path or derived from
+ * ECID/CPID) and verify a valid cache exists.
+ *
+ * cache_dir_override – when non-NULL the supplied path is used directly,
+ * bypassing the ECID/CPID derivation.  The path must already contain a
+ * complete set of img4 payloads and a .complete manifest.
+ *
+ * Returns 0 on cache hit, -1 on miss or error.
  */
 static int cache_load_for_boot(rdsk_ctx_t *ctx, const char *cache_dir_override)
 {
-    if (ctx_set_cache_dir(ctx) != 0) return -1;
+    if (ctx_set_cache_dir(ctx, cache_dir_override) != 0)
+        return -1;
 
     if (!cache_is_valid(ctx)) {
         log_info("No valid cache found for this device — full build required.");
