@@ -588,7 +588,7 @@ static void cache_invalidate(const rdsk_ctx_t *ctx)
  * cache_load_for_boot – populate cache_dir and verify a valid cache exists.
  * Returns 0 on cache hit, -1 on miss or if device info is unavailable.
  */
-static int cache_load_for_boot(rdsk_ctx_t *ctx)
+static int cache_load_for_boot(rdsk_ctx_t *ctx, const char *cache_dir_override)
 {
     if (ctx_set_cache_dir(ctx) != 0) return -1;
 
@@ -1603,7 +1603,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
  * Public entry point
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-int ideviceenterramdisk_load(void)
+int ideviceenterramdisk_load(const char *cache_dir_override)
 {
     rdsk_ctx_t ctx;
     ctx_init(&ctx);
@@ -1622,7 +1622,7 @@ int ideviceenterramdisk_load(void)
      * skip the full build pipeline and boot directly from cached payloads.
      */
     if (ramdiskBootMode) {
-        if (cache_load_for_boot(&ctx) == 0)
+        if (cache_load_for_boot(&ctx, cache_dir_override) == 0)
             return stage_boot_ramdisk(&ctx);
 
         log_info("Cache miss — running full build pipeline...");
