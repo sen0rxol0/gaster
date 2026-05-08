@@ -14,10 +14,11 @@
 #include "ideviceenterramdisk.h"
 #include "gastera1n.h"
 
-
 bool ramdiskBootMode = false;
 bool pwnDFUMode = false;
 bool DEBUG_ENABLED = false;
+
+extern char *optarg;
 
 int main(int argc, char **argv)
 {
@@ -50,27 +51,34 @@ int main(int argc, char **argv)
     puts("//\thttps://github.com/1Conan/tsschecker");
     puts("");
 
+    const char *cache_dir_override = NULL;
+    
     int opt;
-    while ((opt = getopt(argc, argv, "hdpt")) != -1) {
+    while ((opt = getopt(argc, argv, "hdptc:")) != -1) {
         switch (opt) {
         case 'h':
             puts("gastera1n v2.0\n"
                  "Optional arguments:\n"
                  "  -t  Boot with files from cache directory\n"
+                 "  -c <dir>  Set custom cache directory\n"
                  "  -d  Enable debug logging\n"
                  "  -p  Run gaster");
             return 0;
         case 'd':
-            log_warn("%s\n", "Debug is enabled!");
             DEBUG_ENABLED = true;
+            log_warn("%s\n", "Debug is enabled!");
             break;
         case 'p':
-            log_warn("%s\n", "Entering pwned DFU mode with gaster!");
             pwnDFUMode = true;
+            log_warn("%s\n", "Entering pwned DFU mode with gaster!");
             break;
         case 't':
-            log_warn("%s\n", "Booting directly, skipping downloading and patching!");
             ramdiskBootMode = true;
+            log_warn("%s\n", "Booting directly, skipping downloading and patching!");
+            break;
+        case 'c':
+            cache_dir_override = optarg;
+            log_warn("Using custom cache directory: %s\n", cache_dir_override);
             break;
         default:
             break;
@@ -84,7 +92,7 @@ int main(int argc, char **argv)
 
     log_info("Device is now in pwned DFU mode.");
         
-    if(!pwnDFUMode && ideviceenterramdisk_load() != 0) {
+    if(!pwnDFUMode && ideviceenterramdisk_load(cache_dir_override) != 0) {
         log_error("Failed to boot device into SSH ramdisk\n");
         return -1;
     }
