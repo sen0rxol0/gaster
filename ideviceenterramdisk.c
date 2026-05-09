@@ -495,20 +495,33 @@ static void ctx_init(rdsk_ctx_t *ctx)
 }
 
 /*
- * ctx_set_cache_dir – derive cache_dir from ecid/cpid
- * or explicit user-supplied
- * path and redirect all img4 / im4m fields into it.  The directory is
- * created if it does not already exist.
+ * ctx_set_cache_dir – resolve and create the per-device cache directory.
+ *
+ * The directory structure is always:
+ *
+ *   <base>/<ecid>_<cpid>/
+ *
+ * where <base> is either:
+ *   • path_override  — when the caller supplies an explicit parent path, or
+ *   • CACHE_BASE_DIR — the default relative path used when no override is given.
+ *
+ * The <ecid>_<cpid> suffix is *always* appended here, so callers must pass
+ * only the parent directory — never a path that already includes the suffix.
+ *
+ * ensure_device_info() must have been called before this function.
  */
 static int ctx_set_cache_dir(rdsk_ctx_t *ctx, const char *path_override)
 {
 
+    char subdir[128];
+    snprintf(subdir, sizeof(subdir), "%s_%s", g_ecid, g_cpid);
+    
     if (path_override != NULL) {
         snprintf(ctx->cache_dir, sizeof(ctx->cache_dir),
-            "%s/gastera1n/%s_%s", path_override, g_ecid, g_cpid);
+            "%s/%s", path_override, subdir);
     } else {
         snprintf(ctx->cache_dir, sizeof(ctx->cache_dir),
-             "%s/%s_%s", CACHE_BASE_DIR, g_ecid, g_cpid);
+             "%s/%s", CACHE_BASE_DIR, subdir);
     }
     
     if (mkdir_p(ctx->cache_dir, 0755) != 0) {
@@ -571,6 +584,7 @@ static bool cache_is_valid(const rdsk_ctx_t *ctx)
             return false;
         }
     }
+
     return true;
 }
 
@@ -592,14 +606,10 @@ static void cache_invalidate(const rdsk_ctx_t *ctx)
 }
 
 /*
- * cache_load_for_boot – set up cache_dir (from override path or derived from
- * ECID/CPID) and verify a valid cache exists.
+ * cache_load_for_boot – resolve the cache directory and verify it is complete.
  *
- * cache_dir_override – when non-NULL the supplied path is used directly,
- * bypassing the ECID/CPID derivation.  The path must already contain a
- * complete set of img4 payloads and a .complete manifest.
- *
- * Returns 0 on cache hit, -1 on miss or error.
+ * path_override must be the *parent* directory (e.g. the Application Support
+ * path).  ctx_set_cache_dir will append the device-specific subdirectory.
  */
 static int cache_load_for_boot(rdsk_ctx_t *ctx, const char *cache_dir_override)
 {
@@ -607,11 +617,13 @@ static int cache_load_for_boot(rdsk_ctx_t *ctx, const char *cache_dir_override)
         return -1;
 
     if (!cache_is_valid(ctx)) {
-        log_info("No valid cache found for this device — full build required.");
+        log_info("Cache miss for device %s_%s — full build required.",
+                 g_ecid, g_cpid);
         return -1;
     }
 
-    log_info("Cache hit: using pre-built payloads from %s", ctx->cache_dir);
+    log_info("Cache hit: using pre-built payloads for %s_%s from %s",
+             g_ecid, g_cpid, ctx->cache_dir);
     return 0;
 }
 
