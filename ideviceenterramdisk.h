@@ -14,6 +14,18 @@
 extern bool ramdiskBootMode;
 
 /*
+ * ideviceenterramdisk_set_tool_dir – set the directory that contains all
+ * companion tool binaries and bundled resources (img4, ldid2, bootim, …).
+ *
+ * The path is resolved to an absolute path via realpath() so it remains
+ * valid regardless of any subsequent working-directory changes.
+ *
+ * Must be called before ideviceenterramdisk_load().
+ * Returns 0 on success, -1 on failure (path does not exist).
+ */
+int ideviceenterramdisk_set_tool_dir(const char *path);
+
+/*
  * ideviceenterramdisk_load – run the full ramdisk boot flow:
  *   prepare → download → decrypt → patch → boot
  *
