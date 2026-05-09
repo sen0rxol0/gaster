@@ -957,7 +957,7 @@ static int stage_ensure_tools(void)
  * Stage: prepare
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-static int stage_prepare(rdsk_ctx_t *ctx)
+static int stage_prepare(rdsk_ctx_t *ctx, const char *cache_dir_override)
 {
     int found = 0;
     for (int i = 0; device_loaders[i].identifier; i++) {
@@ -973,7 +973,7 @@ static int stage_prepare(rdsk_ctx_t *ctx)
         return -1;
     }
 
-    if (ctx_set_cache_dir(ctx) != 0) return -1;
+    if (ctx_set_cache_dir(ctx, cache_dir_override) != 0) return -1;
 
     /* Invalidate any existing cache before rebuilding. */
     cache_invalidate(ctx);
@@ -1642,7 +1642,7 @@ int ideviceenterramdisk_load(const char *cache_dir_override)
         log_info("Cache miss — running full build pipeline...");
     }
 
-    if (stage_prepare(&ctx)         != 0) return -1;
+    if (stage_prepare(&ctx, cache_dir_override) != 0) return -1;
     if (stage_download_images(&ctx) != 0) return -1;
     if (stage_decrypt(&ctx)         != 0) return -1;
     if (stage_patch(&ctx)           != 0) return -1;
