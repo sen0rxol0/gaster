@@ -81,12 +81,6 @@ static char g_cpid[16];
 static char g_product_type[64];
 static char g_model[64];
 
-static void tool_path(const char *name, char *out)
-{
-    snprintf(out, PATH_MAX, "%s/%s", g_tool_dir, name);
-}
-
-
 /* ═══════════════════════════════════════════════════════════════════════════
  * Native C file-system helpers
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -935,6 +929,10 @@ static int im4m_from_shsh(const char *shsh_path, const char *im4m_path)
  * Tool management
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+static void tool_path(const char *name, char *out)
+{
+    snprintf(out, PATH_MAX, "%s/%s", g_tool_dir, name);
+}
 /*
  * ensure_tool – verify the named tool binary exists and is executable.
  * make_executable() also strips com.apple.quarantine on macOS.
@@ -1620,6 +1618,30 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     return 0;
 }
 
+
+/*
+ * ideviceenterramdisk_set_tool_dir – resolve and store the tool directory
+ * as an absolute path.
+ *
+ * Must be called before any stage function.  Accepts a relative or absolute
+ * path; the result stored in g_tool_dir is always absolute so tool_path()
+ * remains correct regardless of any subsequent chdir().
+ *
+ * Returns 0 on success, -1 if the path cannot be resolved (does not exist
+ * or permission denied).
+ */
+int ideviceenterramdisk_set_tool_dir(const char *path)
+{
+    char resolved[PATH_MAX];
+    if (realpath(path, resolved) == NULL) {
+        log_error("ideviceenterramdisk_set_tool_dir: cannot resolve '%s': %s\n",
+                  path, strerror(errno));
+        return -1;
+    }
+    snprintf(g_tool_dir, sizeof(g_tool_dir), "%s", resolved);
+    log_debug("tool_dir → %s\n", g_tool_dir);
+    return 0;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Public entry point
