@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
+#include <libgen.h>   /* dirname */
 
 #include "log.h"
 #include "ideviceenterramdisk.h"
@@ -91,7 +92,23 @@ int main(int argc, char **argv)
     }
 
     log_info("Device is now in pwned DFU mode.");
-        
+
+    /*
+     * Resolve the tool directory from the executable's own location so
+     * that relative invocations ("./gastera1n", launched from a different
+     * working directory) and symlinks all resolve correctly.
+     *
+     * dirname() may modify its argument, so we work on a copy.
+     */
+    {
+        char exe_copy[PATH_MAX];
+        snprintf(exe_copy, sizeof(exe_copy), "%s", argv[0]);
+        if (ideviceenterramdisk_set_tool_dir(dirname(exe_copy)) != 0) {
+            log_error("Failed to resolve tool directory from '%s'\n", argv[0]);
+            return -1;
+        }
+    }
+    
     if(!pwnDFUMode && ideviceenterramdisk_load(cache_dir_override) != 0) {
         log_error("Failed to boot device into SSH ramdisk\n");
         return -1;
