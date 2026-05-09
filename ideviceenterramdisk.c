@@ -172,17 +172,18 @@ static int file_copy(const char *src, const char *dst)
     return ret;
 }
 
-/* Decompress gz_path → out_path via zlib, removing gz_path on success. */
+/* Decompress gz_path → out_path via zlib, keeping gz_path intact. */
 static int gunzip_file(const char *gz_path, const char *out_path)
 {
     gzFile gz = gzopen(gz_path, "rb");
     if (!gz) {
-        log_error("gunzip_file: cannot open '%s'\n", gz_path);
+        log_error("gunzip_file_keep: cannot open '%s'\n", gz_path);
         return -1;
     }
     FILE *out = fopen(out_path, "wb");
     if (!out) {
-        log_error("gunzip_file: cannot create '%s': %s\n", out_path, strerror(errno));
+        log_error("gunzip_file_keep: cannot create '%s': %s\n",
+                  out_path, strerror(errno));
         gzclose(gz);
         return -1;
     }
@@ -191,25 +192,22 @@ static int gunzip_file(const char *gz_path, const char *out_path)
     int n, ret = 0;
     while ((n = gzread(gz, buf, sizeof(buf))) > 0) {
         if (fwrite(buf, 1, (size_t)n, out) != (size_t)n) {
-            log_error("gunzip_file: write error on '%s'\n", out_path);
+            log_error("gunzip_file_keep: write error on '%s'\n", out_path);
             ret = -1;
             break;
         }
     }
     if (n < 0) {
         int zerr;
-        log_error("gunzip_file: decompress error: %s\n", gzerror(gz, &zerr));
+        log_error("gunzip_file_keep: decompress error: %s\n",
+                  gzerror(gz, &zerr));
         ret = -1;
     }
 
     fclose(out);
     gzclose(gz);
 
-    if (ret == 0)
-        unlink(gz_path);
-    else
-        unlink(out_path);
-
+    if (ret != 0) unlink(out_path);
     return ret;
 }
 
@@ -1202,22 +1200,19 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     char ldid2_bin[PATH_MAX];
     tool_path(TOOL_LDID2, ldid2_bin);
 
-    char re_gz[PATH_MAX], re_src[PATH_MAX], hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
+    char re_gz[PATH_MAX], hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
     snprintf(re_gz,   sizeof(re_gz),   "%s/restored_external.gz",            g_tool_dir);
-    snprintf(re_src,  sizeof(re_src),  "%s/restored_external",               g_tool_dir);
     snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",           ctx->staging);
     snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",         ctx->staging);
     snprintf(dst_bin, sizeof(dst_bin), "%s/usr/local/bin/restored_external", ctx->mount);
 
-    if (access(re_src, F_OK) != 0 && access(re_gz, F_OK) == 0) {
-        if (gunzip_file(re_gz, re_src) != 0) {
-            log_error("patch_restored_external: failed to decompress restored_external.gz\n");
-            return -1;
-        }
-    }
-    
-    if (file_copy(re_src, hax) != 0) {
-        log_error("patch_restored_external: failed to copy binary\n");
+    /*
+     * Decompress the bundle-resident gz into staging each run.
+     * gunzip_file_keep leaves the source intact so the bundle is
+     * never modified and future runs always have the original to read.
+     */
+    if (gunzip_file_keep(re_gz, hax) != 0) {
+        log_error("patch_restored_external: failed to decompress '%s'\n", re_gz);
         return -1;
     }
 
@@ -1256,14 +1251,15 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
     }
 
     if (file_copy(hax, dst_bin) != 0) {
-        log_error("patch_restored_external: failed to copy patched binary "
+        log_error("patch_restored_external: failed to install patched binary "
                   "('%s' → '%s')\n", hax, dst_bin);
         unlink(hax);
         return -1;
     }
 
     if (chmod(dst_bin, 0755) != 0) {
-        log_error("patch_restored_external: chmod dst_bin failed: %s\n", strerror(errno));
+        log_error("patch_restored_external: chmod dst_bin failed: %s\n",
+                  strerror(errno));
         unlink(hax);
         return -1;
     }
