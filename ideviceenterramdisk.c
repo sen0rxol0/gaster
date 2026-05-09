@@ -177,12 +177,12 @@ static int gunzip_file(const char *gz_path, const char *out_path)
 {
     gzFile gz = gzopen(gz_path, "rb");
     if (!gz) {
-        log_error("gunzip_file_keep: cannot open '%s'\n", gz_path);
+        log_error("gunzip_file: cannot open '%s'\n", gz_path);
         return -1;
     }
     FILE *out = fopen(out_path, "wb");
     if (!out) {
-        log_error("gunzip_file_keep: cannot create '%s': %s\n",
+        log_error("gunzip_file: cannot create '%s': %s\n",
                   out_path, strerror(errno));
         gzclose(gz);
         return -1;
@@ -192,14 +192,14 @@ static int gunzip_file(const char *gz_path, const char *out_path)
     int n, ret = 0;
     while ((n = gzread(gz, buf, sizeof(buf))) > 0) {
         if (fwrite(buf, 1, (size_t)n, out) != (size_t)n) {
-            log_error("gunzip_file_keep: write error on '%s'\n", out_path);
+            log_error("gunzip_file: write error on '%s'\n", out_path);
             ret = -1;
             break;
         }
     }
     if (n < 0) {
         int zerr;
-        log_error("gunzip_file_keep: decompress error: %s\n",
+        log_error("gunzip_file: decompress error: %s\n",
                   gzerror(gz, &zerr));
         ret = -1;
     }
@@ -1208,10 +1208,10 @@ static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
 
     /*
      * Decompress the bundle-resident gz into staging each run.
-     * gunzip_file_keep leaves the source intact so the bundle is
+     * gunzip_file leaves the source intact so the bundle is
      * never modified and future runs always have the original to read.
      */
-    if (gunzip_file_keep(re_gz, hax) != 0) {
+    if (gunzip_file(re_gz, hax) != 0) {
         log_error("patch_restored_external: failed to decompress '%s'\n", re_gz);
         return -1;
     }
