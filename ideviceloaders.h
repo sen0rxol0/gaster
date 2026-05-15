@@ -5,7 +5,7 @@
 #include <string.h>
 
 /* Firmware version entry: one per supported iOS version per device */
-typedef struct device_loader_version {
+typedef struct loader_version {
     char* version;           /* e.g. "14.8" */
     char* ibss_ivkey;
     char* ibss_path;
@@ -16,11 +16,11 @@ typedef struct device_loader_version {
     char* kernelcache_path;
     char* ramdisk_path;
     char* ipsw_url;
-} device_loader_version;
+} loader_version;
 
 typedef struct device_loader {
     char*                 identifier;
-    device_loader_version versions[8]; /* up to 7 version entries + 1 sentinel (version == NULL) */
+    loader_version versions[8]; /* up to 7 version entries + 1 sentinel (version == NULL) */
 } device_loader;
 
 /*
@@ -33,7 +33,7 @@ typedef struct device_loader {
  * The returned pointer is valid for the lifetime of the device_loaders[]
  * array (i.e. the duration of the process) and must not be freed.
  */
-static inline const device_loader_version *
+static inline const loader_version *
 device_loader_select_version(const device_loader *loader, const char *version)
 {
     if (!loader || !version) return NULL;
@@ -368,11 +368,11 @@ device_loader_find(const char *product_type)
  * Returns a pointer to the lowest-version entry, or NULL if the      *
  * loader is NULL or has no populated version entries.                *
  * ------------------------------------------------------------------ */
-static inline const device_loader_version *
+static inline const loader_version *
 device_loader_lowest_version(const device_loader *loader)
 {
     if (!loader) return NULL;
-    const device_loader_version *best = NULL;
+    const loader_version *best = NULL;
     for (int i = 0; i < 8; i++) {
         if (!loader->versions[i].version) break;           /* sentinel */
         if (!best || strcmp(loader->versions[i].version, best->version) < 0)

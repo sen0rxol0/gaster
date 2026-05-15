@@ -435,7 +435,7 @@ typedef struct {
      * Set by stage_prepare(); valid for the lifetime of the boot session.
      * All firmware path and URL accesses go through this pointer.
      */
-    const device_loader_version *active_version;
+    const loader_version *active_version;
 
     const char *ipsw_url;
 
@@ -983,7 +983,7 @@ static int stage_prepare(rdsk_ctx_t *ctx,
     ctx->loader = *loader;
 
     /* Select version — use caller's choice or fall back to lowest. */
-    const device_loader_version *v = ios_version
+    const loader_version *v = ios_version
         ? device_loader_select_version(loader, ios_version)
         : device_loader_lowest_version(loader);
 
@@ -1045,7 +1045,7 @@ static int download_component(rdsk_ctx_t *ctx, const char *remote, const char *l
  */
 static int stage_download_images(rdsk_ctx_t *ctx)
 {
-    const device_loader_version *v = ctx->active_version;
+    const loader_version *v = ctx->active_version;
  
     struct { const char *remote; const char *local; } files[] = {
         { v->kernelcache_path, ctx->kernelcache },
