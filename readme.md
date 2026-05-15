@@ -7,8 +7,8 @@ Features
 
 SSH connect in Terminal, with password `alpine`:
 ```sh
-iproxy 2222 22 &
-ssh root@localhost -p2222
+iproxy 1337 22 &
+ssh root@localhost -p1337
 ```
 
 use `mountfs` to mount filesystems
