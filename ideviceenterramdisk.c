@@ -430,8 +430,15 @@ static char *shell_cmd_capture(const char *fmt, ...)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
-    device_loader loader;
-    char *ipsw_url;
+    /*
+     * active_version – points into the global device_loaders[] table.
+     * Set by stage_prepare(); valid for the lifetime of the boot session.
+     * All firmware path and URL accesses go through this pointer.
+     */
+    const device_loader_version *active_version;
+
+    const char *ipsw_url;
+
 
     char staging[PATH_MAX];
     char mount[PATH_MAX];
@@ -964,22 +971,31 @@ static int stage_ensure_tools(void)
 /* ═══════════════════════════════════════════════════════════════════════════
  * Stage: prepare
  * ═══════════════════════════════════════════════════════════════════════════ */
-
-static int stage_prepare(rdsk_ctx_t *ctx, const char *cache_dir_override)
+static int stage_prepare(rdsk_ctx_t *ctx,
+                         const char *ios_version,
+                         const char *cache_dir_override)
 {
-    int found = 0;
-    for (int i = 0; device_loaders[i].identifier; i++) {
-        if (!strcmp(device_loaders[i].identifier, g_product_type)) {
-            ctx->loader   = device_loaders[i];
-            ctx->ipsw_url = (char *)ctx->loader.ipsw_url;
-            found = 1;
-            break;
-        }
-    }
-    if (!found) {
-        log_error("stage_prepare: unsupported device\n");
+    const device_loader *loader = device_loader_find(g_product_type);
+    if (!loader) {
+        log_error("stage_prepare: unsupported device '%s'\n", g_product_type);
         return -1;
     }
+    ctx->loader = *loader;
+
+    /* Select version — use caller's choice or fall back to lowest. */
+    const device_loader_version *v = ios_version
+        ? device_loader_select_version(loader, ios_version)
+        : device_loader_lowest_version(loader);
+
+    if (!v) {
+        log_error("stage_prepare: iOS %s not supported for '%s'\n",
+                  ios_version ? ios_version : "(auto)", g_product_type);
+        return -1;
+    }
+
+    log_info("Selected iOS %s for %s", v->version, g_product_type);
+    ctx->active_version = v;
+    ctx->ipsw_url       = (char *)v->ipsw_url;
 
     if (ctx_set_cache_dir(ctx, cache_dir_override) != 0) return -1;
 
@@ -1021,23 +1037,32 @@ static int download_component(rdsk_ctx_t *ctx, const char *remote, const char *l
     return r;
 }
 
+/*
+ * stage_download_images – fetch all firmware components from the IPSW.
+ *
+ * All paths are read from ctx->active_version, which was resolved and
+ * validated by stage_prepare().
+ */
 static int stage_download_images(rdsk_ctx_t *ctx)
 {
+    const device_loader_version *v = ctx->active_version;
+ 
     struct { const char *remote; const char *local; } files[] = {
-        { ctx->loader.kernelcache_path, ctx->kernelcache },
-        { ctx->loader.trustcache_path,  ctx->trustcache  },
-        { ctx->loader.ramdisk_path,     ctx->ramdisk     },
-        { ctx->loader.devicetree_path,  ctx->devicetree  },
-        { ctx->loader.ibec_path,        ctx->ibec        },
-        { ctx->loader.ibss_path,        ctx->ibss        },
+        { v->kernelcache_path, ctx->kernelcache },
+        { v->trustcache_path,  ctx->trustcache  },
+        { v->ramdisk_path,     ctx->ramdisk     },
+        { v->devicetree_path,  ctx->devicetree  },
+        { v->ibec_path,        ctx->ibec        },
+        { v->ibss_path,        ctx->ibss        },
         { NULL, NULL }
     };
-
+ 
     for (int i = 0; files[i].remote; i++)
         if (download_component(ctx, files[i].remote, files[i].local) != 0)
             return -1;
     return 0;
 }
+
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1647,7 +1672,17 @@ int ideviceenterramdisk_set_tool_dir(const char *path)
  * Public entry point
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-int ideviceenterramdisk_load(const char *cache_dir_override)
+/*
+ * ideviceenterramdisk_load – public entry point.
+ *
+ * ios_version  – target iOS version string (e.g. "14.8", "15.7"), or NULL
+ *                to auto-select the lowest version available for the device.
+ *
+ * cache_dir_override – parent directory for the per-device cache subdir, or
+ *                      NULL to use the default CACHE_BASE_DIR location.
+ */
+int ideviceenterramdisk_load(const char *ios_version,
+                             const char *cache_dir_override)
 {
     rdsk_ctx_t ctx;
     ctx_init(&ctx);
@@ -1672,7 +1707,7 @@ int ideviceenterramdisk_load(const char *cache_dir_override)
         log_info("Cache miss — running full build pipeline...");
     }
 
-    if (stage_prepare(&ctx, cache_dir_override) != 0) return -1;
+    if (stage_prepare(&ctx, ios_version, cache_dir_override) != 0) return -1;
     if (stage_download_images(&ctx) != 0) return -1;
     if (stage_decrypt(&ctx)         != 0) return -1;
     if (stage_patch(&ctx)           != 0) return -1;
