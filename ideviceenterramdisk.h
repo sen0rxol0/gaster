@@ -7,7 +7,9 @@
 /*
  * ramdiskBootMode – when true, ideviceenterramdisk_load() skips the
  * prepare / download / patch pipeline and boots directly from the
- * per-device cache.  Set this before calling ideviceenterramdisk_load().
+ * per-device cache if a valid one exists; falls back to the full
+ * pipeline on a cache miss.  Set this before calling
+ * ideviceenterramdisk_load().
  *
  * Value is set in main.c.
  */
@@ -31,24 +33,38 @@ int ideviceenterramdisk_set_tool_dir(const char *path);
  *
  * If ramdiskBootMode is true and a valid per-device cache exists the
  * prepare/download/patch stages are skipped and the device is booted
- * directly from the cached payloads.
+ * directly from the cached payloads.  On a cache miss the full pipeline
+ * runs and the result is cached for future boots.
  *
- * cache_dir_override – when non-NULL and ramdiskBootMode is true, this
- * path is used as the cache directory directly instead of the default
- * per-device path derived from ECID and CPID.  Ignored when
- * ramdiskBootMode is false.
+ * ios_version – iOS version string to target (e.g. "14.8", "15.7").
+ * When NULL the lowest version available for the connected device is
+ * selected automatically.
+ *
+ * cache_dir_override – when non-NULL, used as the parent directory for
+ * the per-device cache subdirectory (which is always named
+ * "<ecid>_<cpid>") instead of the default CACHE_BASE_DIR.  Pass NULL
+ * to use the default location.
  *
  * Returns 0 on success, -1 on any failure.
  */
-int ideviceenterramdisk_load(const char *cache_dir_override);
+int ideviceenterramdisk_load(const char *ios_version,
+                             const char *cache_dir_override);
 
 /* ── DFU / irecovery helpers ──────────────────────────────────────────── */
 
 /*
- * dfu_wait_for_device – block until a DFU-mode or recovery-mode device
- * appears, set auto-boot=true in NVRAM, and return.
+ * dfu_progress_cb – irecovery progress event callback.
  *
- * Note: writing auto-boot=true is a persistent NVRAM side-effect.
+ * Renders a progress bar to stdout for IRECV_PROGRESS events.
+ * Register with irecv_event_subscribe() before calling irecv_send_file().
+ *
+ * Returns 0 (always succeeds; ignored by libirecovery).
+ */
+int dfu_progress_cb(irecv_client_t client, const irecv_event_t *event);
+
+/*
+ * dfu_wait_for_device – block until a DFU-mode or recovery-mode device
+ * appears and return.
  *
  * Returns 0 on success.  Never returns -1 — loops indefinitely until a
  * device is found.
@@ -56,8 +72,9 @@ int ideviceenterramdisk_load(const char *cache_dir_override);
 int dfu_wait_for_device(void);
 
 /*
- * dfu_wait_ready – poll until the DFU/recovery client is reachable or
- * timeout_secs elapses.
+ * dfu_wait_ready – sleep initial_delay_ms, then poll until the
+ * DFU/recovery client is reachable or timeout_secs elapses, with
+ * 1-second intervals between probes.
  *
  * Returns 0 if the device responds, -1 on timeout.
  */
