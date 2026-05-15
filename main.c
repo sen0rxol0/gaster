@@ -16,8 +16,8 @@
 #include "gastera1n.h"
 
 bool ramdiskBootMode = false;
-bool pwnDFUMode = false;
-bool DEBUG_ENABLED = false;
+bool pwnDFUMode      = false;
+bool DEBUG_ENABLED   = false;
 
 extern char *optarg;
 
@@ -53,17 +53,21 @@ int main(int argc, char **argv)
     puts("");
 
     const char *cache_dir_override = NULL;
-    
+    const char *ios_version        = NULL;   /* NULL → auto-select lowest */
+
     int opt;
-    while ((opt = getopt(argc, argv, "hdptc:")) != -1) {
+    while ((opt = getopt(argc, argv, "hdptc:v:")) != -1) {
         switch (opt) {
         case 'h':
             puts("gastera1n v2.0\n"
                  "Optional arguments:\n"
-                 "  -t  Boot with files from cache directory\n"
-                 "  -c <dir>  Set custom cache directory\n"
-                 "  -d  Enable debug logging\n"
-                 "  -p  Run gaster");
+                 "  -v <version>  Target iOS version (e.g. 14.8, 15.7)\n"
+                 "                Defaults to the lowest version available\n"
+                 "                for the connected device.\n"
+                 "  -t            Boot with files from cache directory\n"
+                 "  -c <dir>      Set custom cache directory\n"
+                 "  -d            Enable debug logging\n"
+                 "  -p            Run gaster (pwned DFU only, no ramdisk)");
             return 0;
         case 'd':
             DEBUG_ENABLED = true;
@@ -80,6 +84,10 @@ int main(int argc, char **argv)
         case 'c':
             cache_dir_override = optarg;
             log_warn("Using custom cache directory: %s\n", cache_dir_override);
+            break;
+        case 'v':
+            ios_version = optarg;
+            log_warn("Targeting iOS version: %s\n", ios_version);
             break;
         default:
             break;
@@ -108,8 +116,8 @@ int main(int argc, char **argv)
             return -1;
         }
     }
-    
-    if(!pwnDFUMode && ideviceenterramdisk_load(cache_dir_override) != 0) {
+
+    if (!pwnDFUMode && ideviceenterramdisk_load(ios_version, cache_dir_override) != 0) {
         log_error("Failed to boot device into SSH ramdisk\n");
         return -1;
     }
