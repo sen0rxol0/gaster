@@ -431,11 +431,11 @@ static char *shell_cmd_capture(const char *fmt, ...)
 
 typedef struct {
     /*
-     * active_version – points into the global device_loaders[] table.
+     * loader_active – points into the global device_loaders[] table.
      * Set by stage_prepare(); valid for the lifetime of the boot session.
      * All firmware path and URL accesses go through this pointer.
      */
-    const loader_version *active_version;
+    const loader_version *loader_active;
 
     const char *ipsw_url;
 
@@ -980,7 +980,7 @@ static int stage_prepare(rdsk_ctx_t *ctx,
         log_error("stage_prepare: unsupported device '%s'\n", g_product_type);
         return -1;
     }
-    ctx->loader = *loader;
+    //ctx->loader = *loader;
 
     /* Select version — use caller's choice or fall back to lowest. */
     const loader_version *v = ios_version
@@ -994,7 +994,7 @@ static int stage_prepare(rdsk_ctx_t *ctx,
     }
 
     log_info("Selected iOS %s for %s", v->version, g_product_type);
-    ctx->active_version = v;
+    ctx->loader_active = v;
     ctx->ipsw_url       = (char *)v->ipsw_url;
 
     if (ctx_set_cache_dir(ctx, cache_dir_override) != 0) return -1;
@@ -1045,7 +1045,7 @@ static int download_component(rdsk_ctx_t *ctx, const char *remote, const char *l
  */
 static int stage_download_images(rdsk_ctx_t *ctx)
 {
-    const loader_version *v = ctx->active_version;
+    const loader_version *v = ctx->loader_active;
  
     struct { const char *remote; const char *local; } files[] = {
         { v->kernelcache_path, ctx->kernelcache },
