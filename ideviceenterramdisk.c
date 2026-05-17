@@ -430,13 +430,8 @@ static char *shell_cmd_capture(const char *fmt, ...)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
-    /*
-     * loader_active – points into the global device_loaders[] table.
-     * Set by stage_prepare(); valid for the lifetime of the boot session.
-     * All firmware path and URL accesses go through this pointer.
-     */
-    const loader_version *loader_active;
 
+    const loader_version *loader_active;
     const char *ipsw_url;
 
 
@@ -976,11 +971,10 @@ static int stage_prepare(rdsk_ctx_t *ctx,
                          const char *cache_dir_override)
 {
     const device_loader *loader = device_loader_find(g_product_type);
-    if (!loader) {
+    if (!loader || !device_loader_has_versions(loader)) {
         log_error("stage_prepare: unsupported device '%s'\n", g_product_type);
         return -1;
     }
-    //ctx->loader = *loader;
 
     /* Select version — use caller's choice or fall back to lowest. */
     const loader_version *v = ios_version
@@ -995,7 +989,7 @@ static int stage_prepare(rdsk_ctx_t *ctx,
 
     log_info("Selected iOS %s for %s", v->version, g_product_type);
     ctx->loader_active = v;
-    ctx->ipsw_url       = (char *)v->ipsw_url;
+    ctx->ipsw_url      = v->ipsw_url;
 
     if (ctx_set_cache_dir(ctx, cache_dir_override) != 0) return -1;
 

@@ -45,6 +45,12 @@ device_loader_select_version(const device_loader *loader, const char *version)
     return NULL;
 }
 
+static inline bool
+device_loader_has_versions(const device_loader *loader)
+{
+    return loader && loader->versions[0].version != NULL;
+}
+
 /*
  * device_loader_find – look up a device_loader by product type string
  * (e.g. "iPhone9,1") in the global device_loaders[] table.
@@ -356,26 +362,25 @@ device_loader_find(const char *product_type)
     return NULL;
 }
 
-/* ------------------------------------------------------------------ *
- * device_loader_lowest_version – return the version entry with the   *
- * lexicographically lowest version string in the loader's versions[] *
- * array, which corresponds to the oldest supported iOS release.      *
- *                                                                    *
- * Version strings use dotted-decimal notation ("14.8", "15.7", …).  *
- * Comparison is done with strcmp(), which sorts correctly for the    *
- * single-digit major/minor values used here.                         *
- *                                                                    *
- * Returns a pointer to the lowest-version entry, or NULL if the      *
- * loader is NULL or has no populated version entries.                *
- * ------------------------------------------------------------------ */
+/* Replace the strcmp-based comparison in device_loader_lowest_version() */
+static inline int compare_version(const char *a, const char *b)
+{
+    int a_maj, a_min, b_maj, b_min;
+    a_maj = a_min = b_maj = b_min = 0;
+    sscanf(a, "%d.%d", &a_maj, &a_min);
+    sscanf(b, "%d.%d", &b_maj, &b_min);
+    if (a_maj != b_maj) return a_maj - b_maj;
+    return a_min - b_min;
+}
+
 static inline const loader_version *
 device_loader_lowest_version(const device_loader *loader)
 {
     if (!loader) return NULL;
     const loader_version *best = NULL;
     for (int i = 0; i < 8; i++) {
-        if (!loader->versions[i].version) break;           /* sentinel */
-        if (!best || strcmp(loader->versions[i].version, best->version) < 0)
+        if (!loader->versions[i].version) break;
+        if (!best || compare_version(loader->versions[i].version, best->version) < 0)
             best = &loader->versions[i];
     }
     return best;
