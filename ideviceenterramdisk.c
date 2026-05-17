@@ -562,7 +562,16 @@ static void cache_manifest_path(const rdsk_ctx_t *ctx, char *out)
     snprintf(out, PATH_MAX, "%s/%s", ctx->cache_dir, CACHE_MANIFEST_NAME);
 }
 
-static bool cache_is_valid(const rdsk_ctx_t *ctx)
+/* Remove the manifest sentinel so the next run will rebuild. */
+static void cache_invalidate(const rdsk_ctx_t *ctx)
+{
+    if (ctx->cache_dir[0] == '\0') return;
+    char manifest[PATH_MAX];
+    cache_manifest_path(ctx, manifest);
+    unlink(manifest);
+}
+
+static bool cache_is_valid(const rdsk_ctx_t *ctx, const char *ios_version)
 {
     if (ctx->cache_dir[0] == '\0') return false;
 
@@ -579,24 +588,45 @@ static bool cache_is_valid(const rdsk_ctx_t *ctx)
         }
     }
 
+    FILE *f = fopen(manifest, "r");
+    if (!f) {
+        log_info("Cache version check: cannot open manifest for %s_%s — rebuilding.",
+                g_ecid, g_cpid);
+        cache_invalidate(ctx);
+        return false;
+    }
+
+    char stored[64] = {0};
+    bool ok = (fgets(stored, sizeof(stored), f) != NULL);
+    fclose(f);
+
+    if (!ok || stored[0] == '\0') {
+        log_info("Cache version check: empty manifest for %s_%s — rebuilding.",
+                g_ecid, g_cpid);
+        cache_invalidate(ctx);
+        return false;
+    }
+
+    stored[strcspn(stored, "\r\n")] = '\0';
+
+    if (ios_version != NULL && strcmp(stored, ios_version) != 0) {
+        log_info("Cache version mismatch for %s_%s: have '%s', want '%s' — rebuilding.",
+                g_ecid, g_cpid, stored, ios_version);
+        cache_invalidate(ctx);
+        return false;
+    }
+
+    log_info("Cache version: %s", stored);
+
     return true;
 }
 
 /* Write the manifest sentinel.  Call only after all img4 files are written. */
-static int cache_mark_complete(const rdsk_ctx_t *ctx)
+static int cache_mark_complete(const rdsk_ctx_t *ctx, const char *ios_version)
 {
     char manifest[PATH_MAX];
     cache_manifest_path(ctx, manifest);
-    return file_write_line(manifest, "complete");
-}
-
-/* Remove the manifest sentinel so the next run will rebuild. */
-static void cache_invalidate(const rdsk_ctx_t *ctx)
-{
-    if (ctx->cache_dir[0] == '\0') return;
-    char manifest[PATH_MAX];
-    cache_manifest_path(ctx, manifest);
-    unlink(manifest);
+    return file_write_line(manifest, ios_version ? ios_version : "auto");
 }
 
 /*
@@ -605,12 +635,14 @@ static void cache_invalidate(const rdsk_ctx_t *ctx)
  * path_override must be the *parent* directory (e.g. the Application Support
  * path).  ctx_set_cache_dir will append the device-specific subdirectory.
  */
-static int cache_load_for_boot(rdsk_ctx_t *ctx, const char *cache_dir_override)
+static int cache_load_for_boot(rdsk_ctx_t *ctx,
+                            const char *ios_version,
+                            const char *cache_dir_override)
 {
     if (ctx_set_cache_dir(ctx, cache_dir_override) != 0)
         return -1;
 
-    if (!cache_is_valid(ctx)) {
+    if (!cache_is_valid(ctx, ios_version)) {
         log_info("Cache miss for device %s_%s — full build required.",
                  g_ecid, g_cpid);
         return -1;
@@ -1485,7 +1517,7 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
         }
     }
 
-    if (cache_mark_complete(ctx) != 0) {
+    if (cache_mark_complete(ctx, ctx->loader_active->version) != 0) {
         log_error("stage_build_img4: failed to write cache manifest\n");
         return -1;
     }
@@ -1695,7 +1727,7 @@ int ideviceenterramdisk_load(const char *ios_version,
      * skip the full build pipeline and boot directly from cached payloads.
      */
     if (ramdiskBootMode) {
-        if (cache_load_for_boot(&ctx, cache_dir_override) == 0)
+        if (cache_load_for_boot(&ctx, ios_version, cache_dir_override) == 0)
             return stage_boot_ramdisk(&ctx);
 
         log_info("Cache miss — running full build pipeline...");
