@@ -689,9 +689,9 @@ _install_companion_tools() {
 #     iBoot64Patcher
 #     tsschecker
 #     LICENSE
-#     README*
+#     README
 #     restored_external.gz
-#     ssh64*
+#     ssh64.tar.gz
 #     bootim@750x1334.im4p
 # ---------------------------------------------------------------------------
 stage_release_tree() {
@@ -734,12 +734,10 @@ stage_release_tree() {
         fi
     done
 
-    shopt -s nullglob
-    for asset in "${ROOT_DIR}"/ssh64* "${ROOT_DIR}"/README*; do
-        cp -v "${asset}" "${release_dir}/"
-    done
-    shopt -u nullglob
-
+    cp -v "${ROOT_DIR}/README" "${release_dir}/README"
+    cat "${ROOT_DIR}"/ssh64.tar.gz_* > "${ROOT_DIR}/ssh64.tar.gz"
+    install -m 644 "${ROOT_DIR}/ssh64.tar.gz" "${release_dir}/ssh64.tar.gz"
+    
     log "Release tree staged: ${release_dir}"
 }
 
