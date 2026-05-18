@@ -1325,15 +1325,9 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     snprintf(ssh64_gz, sizeof(ssh64_gz), "%s/ssh64.tar.gz", g_tool_dir);
 
     if (access(ssh64_gz, F_OK) != 0) {
-        if (shell_cmd("cat \"%s\"/ssh64.tar.gz_* > \"%s\"", g_tool_dir, ssh64_gz) != 0)
-            return -1;
-
-        struct stat st;
-        if (stat(ssh64_gz, &st) != 0 || st.st_size == 0) {
-            log_error("stage_build_ramdisk: reassembled ssh64.tar.gz is missing or empty\n");
-            unlink(ssh64_gz);
-            return -1;
-        }
+        log_error("stage_build_ramdisk: ssh64.tar.gz not found in tool directory '%s'\n",
+                  g_tool_dir);
+        return -1;
     }
 
     char rdsk_dec[PATH_MAX], rdsk_dmg[PATH_MAX];
