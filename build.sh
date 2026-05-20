@@ -734,7 +734,7 @@ stage_release_tree() {
         fi
     done
 
-    cp -v "${ROOT_DIR}/README" "${release_dir}/README"
+    cp -v "${ROOT_DIR}/readme.md" "${release_dir}/README"
     cat "${ROOT_DIR}"/ssh64.tar.gz_* > "${ROOT_DIR}/ssh64.tar.gz"
     install -m 644 "${ROOT_DIR}/ssh64.tar.gz" "${release_dir}/ssh64.tar.gz"
     
