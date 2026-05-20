@@ -10,6 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <libgen.h>   /* dirname */
+#include <limits.h>   /* PATH_MAX */
 
 #include "log.h"
 #include "ideviceenterramdisk.h"
