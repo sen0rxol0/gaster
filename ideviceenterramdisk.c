@@ -1219,22 +1219,17 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     char *var_root = dup_printf("%s/private/var/root", ctx->mount);
     char *var_run  = dup_printf("%s/private/var/run",  ctx->mount);
-    char *sshd_dir = dup_printf("%s/sshd",             ctx->mount);
-    if (!var_root || !var_run || !sshd_dir ||
+    if (!var_root || !var_run ||
         mkdir_p(var_root, 0755) != 0 ||
-        mkdir_p(var_run,  0755) != 0 ||
-        mkdir_p(sshd_dir, 0755) != 0) {
-        free(var_root); free(var_run); free(sshd_dir);
+        mkdir_p(var_run,  0755) != 0) {
+        free(var_root); free(var_run);
         RDSK_FAIL("stage_build_ramdisk: failed to create required directories");
     }
-    free(var_root); free(var_run); free(sshd_dir);
+    free(var_root); free(var_run);
 
-    if (shell_cmd("tar -C '%s/sshd' --preserve-permissions -xf '%s'",
+    if (shell_cmd("tar -C '%s' --preserve-permissions -xf '%s'",
                   ctx->mount, ssh64_gz) != 0)
         RDSK_FAIL("stage_build_ramdisk: tar extract of ssh64 failed");
-
-    if (shell_cmd("rsync --ignore-existing -auK '%s/sshd/' '%s/'", ctx->mount, ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: rsync of sshd tree failed");
 
     if (shell_cmd(
             "for d in"
@@ -1247,12 +1242,8 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
             ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: chmod on merged binary dirs failed");
 
-    if (shell_cmd(
-            "cd '%s' && rm -rf "
-            "./sshd "
-            "./usr/local/standalone/firmware/*",
-            ctx->mount) != 0)
-        RDSK_FAIL("stage_build_ramdisk: cleanup pass failed");
+    if (shell_cmd("rm -rf '%s'/usr/local/standalone/firmware/*", ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: cleanup firmware failed");
 
 detach:
     for (int i = 0; i < 3; i++) {
