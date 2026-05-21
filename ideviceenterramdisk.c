@@ -1250,7 +1250,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     if (shell_cmd(
             "cd '%s' && rm -rf "
             "./sshd "
-            "./usr/local/standalone/firmware/* "
+            "./usr/local/standalone/firmware/*",
             ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: cleanup pass failed");
 
