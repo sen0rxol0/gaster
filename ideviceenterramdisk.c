@@ -716,6 +716,28 @@ int dfu_wait_for_device(void)
     }
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * dfu_reset_reconnect – issue irecv_reset, close, wait for re-enumeration.
+ *
+ * BUG FIX: the original silently skipped the reset when dfu_open_client()
+ * failed (client was NULL) and then called dfu_wait_ready() regardless.
+ * The reset is now best-effort (logged as a warning on failure) but the
+ * function still proceeds to poll for re-enumeration either way, matching
+ * the intent of all call sites.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+static int dfu_reset_reconnect()
+{
+    irecv_client_t client = dfu_open_client();
+    if (client) {
+        irecv_reset(client);
+        irecv_close(client);
+    }
+
+    usleep(1000);  /* brief settle — mirrors Ramiel's usleep(1000) */
+
+    return dfu_wait_for_device();
+}
+
 /* Callback type for dfu_with_client.  Must not close the client. */
 typedef int (*dfu_client_cb_t)(irecv_client_t client, void *ctx);
 
@@ -1395,28 +1417,6 @@ static bool needs_ibss_reset(uint32_t cpid)
            cpid == 0x8965 || cpid == 0x8010;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════
- * dfu_reset_reconnect – issue irecv_reset, close, wait for re-enumeration.
- *
- * BUG FIX: the original silently skipped the reset when dfu_open_client()
- * failed (client was NULL) and then called dfu_wait_ready() regardless.
- * The reset is now best-effort (logged as a warning on failure) but the
- * function still proceeds to poll for re-enumeration either way, matching
- * the intent of all call sites.
- * ═══════════════════════════════════════════════════════════════════════════ */
-static int dfu_reset_reconnect()
-{
-    irecv_client_t client = dfu_open_client();
-    if (client) {
-        irecv_reset(client);
-        irecv_close(client);
-    }
-
-    usleep(1000);  /* brief settle — mirrors Ramiel's usleep(1000) */
-
-    return dfu_wait_for_device();
-}
-
 static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
 {
     uint32_t cpid = (uint32_t)strtoul(g_cpid, NULL, 16);
@@ -1476,7 +1476,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
     if (dfu_send_file(ctx->bootim_img4) != 0 ||
-        dfu_send_cmd("setpicture 0")    != 0 ||
+        dfu_send_cmd("setpicture 0x1")    != 0 ||
         dfu_send_cmd("bgcolor 0 0 0")   != 0)
         log_warn("stage_boot_ramdisk: boot image setup failed (non-fatal)\n");
 
