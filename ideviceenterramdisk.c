@@ -27,7 +27,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <zlib.h>
 
 #include <sys/param.h>
 #include <sys/stat.h>
@@ -61,7 +60,6 @@
 #define DFU_TIMEOUT_SECS         5u
 
 #define TOOL_IMG4            "img4"
-#define TOOL_LDID2           "ldid2"
 #define TOOL_TSSCHECKER      "tsschecker"
 #define TOOL_IBOOT64PATCHER  "iBoot64Patcher"
 #define TOOL_KERNEL64PATCHER "Kernel64Patcher"
@@ -166,44 +164,6 @@ static int file_copy(const char *src, const char *dst)
     return ret;
 }
 
-/* Decompress gz_path → out_path via zlib, keeping gz_path intact. */
-static int gunzip_file(const char *gz_path, const char *out_path)
-{
-    gzFile gz = gzopen(gz_path, "rb");
-    if (!gz) {
-        log_error("gunzip_file: cannot open '%s'\n", gz_path);
-        return -1;
-    }
-    FILE *out = fopen(out_path, "wb");
-    if (!out) {
-        log_error("gunzip_file: cannot create '%s': %s\n",
-                  out_path, strerror(errno));
-        gzclose(gz);
-        return -1;
-    }
-
-    char buf[65536];
-    int n, ret = 0;
-    while ((n = gzread(gz, buf, sizeof(buf))) > 0) {
-        if (fwrite(buf, 1, (size_t)n, out) != (size_t)n) {
-            log_error("gunzip_file: write error on '%s'\n", out_path);
-            ret = -1;
-            break;
-        }
-    }
-    if (n < 0) {
-        int zerr;
-        log_error("gunzip_file: decompress error: %s\n",
-                  gzerror(gz, &zerr));
-        ret = -1;
-    }
-
-    fclose(out);
-    gzclose(gz);
-
-    if (ret != 0) unlink(out_path);
-    return ret;
-}
 
 /* chmod +x and strip com.apple.quarantine. */
 static int make_executable(const char *path)
@@ -384,46 +344,6 @@ static int shell_cmd(const char *fmt, ...)
     }
     return 0;
 }
-
-/*
- * shell_cmd_capture – like shell_cmd but returns stdout as a heap-allocated
- * string (caller must free()).  Returns NULL on failure.
- * Used solely for `ldid2 -e` whose output must be written to a file.
- */
-static char *shell_cmd_capture(const char *fmt, ...)
-{
-    char cmd[4096];
-    va_list ap;
-    va_start(ap, fmt);
-    vsnprintf(cmd, sizeof(cmd), fmt, ap);
-    va_end(ap);
-
-    log_debug("shell_capture: %s\n", cmd);
-
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return NULL;
-
-    char *out = NULL;
-    size_t cap = 0, len = 0;
-    char buf[4096];
-    size_t n;
-
-    while ((n = fread(buf, 1, sizeof(buf), fp)) > 0) {
-        if (len + n + 1 > cap) {
-            cap = (cap + n + 1) * 2;
-            char *tmp = realloc(out, cap);
-            if (!tmp) { free(out); pclose(fp); return NULL; }
-            out = tmp;
-        }
-        memcpy(out + len, buf, n);
-        len += n;
-    }
-
-    if (out) out[len] = '\0';
-    if (pclose(fp) != 0) { free(out); return NULL; }
-    return out;
-}
-
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Context
@@ -986,7 +906,6 @@ static int ensure_tool(const char *name)
 static int stage_ensure_tools(void)
 {
     if (ensure_tool(TOOL_IMG4)            != 0) return -1;
-    if (ensure_tool(TOOL_LDID2)           != 0) return -1;
     if (ensure_tool(TOOL_IBOOT64PATCHER)  != 0) return -1;
     if (ensure_tool(TOOL_TSSCHECKER)      != 0) return -1;
     if (ensure_tool(TOOL_KERNEL64PATCHER) != 0) return -1;
