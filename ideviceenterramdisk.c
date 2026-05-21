@@ -1240,83 +1240,6 @@ static int stage_patch_iboot(rdsk_ctx_t *ctx)
  * Stage: build ramdisk
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/*
- * Patch the restored_external binary inside the mounted ramdisk.
- * ldid2 -e captures entitlements, ldid2 -M re-signs the patched binary.
- */
-static int patch_restored_external_in_ramdisk(rdsk_ctx_t *ctx)
-{
-    char ldid2_bin[PATH_MAX];
-    tool_path(TOOL_LDID2, ldid2_bin);
-
-    char re_gz[PATH_MAX], hax[PATH_MAX], plist[PATH_MAX], dst_bin[PATH_MAX];
-    snprintf(re_gz,   sizeof(re_gz),   "%s/restored_external.gz",            g_tool_dir);
-    snprintf(hax,     sizeof(hax),     "%s/restored_external_hax",           ctx->staging);
-    snprintf(plist,   sizeof(plist),   "%s/restored_external.plist",         ctx->staging);
-    snprintf(dst_bin, sizeof(dst_bin), "%s/usr/local/bin/restored_external", ctx->mount);
-
-    /*
-     * Decompress the bundle-resident gz into staging each run.
-     * gunzip_file leaves the source intact so the bundle is
-     * never modified and future runs always have the original to read.
-     */
-    if (gunzip_file(re_gz, hax) != 0) {
-        log_error("patch_restored_external: failed to decompress '%s'\n", re_gz);
-        return -1;
-    }
-
-    char *ents = shell_cmd_capture("%s -e %s", ldid2_bin, dst_bin);
-    if (!ents) {
-        log_error("patch_restored_external: ldid2 -e failed\n");
-        unlink(hax);
-        return -1;
-    }
-
-    FILE *pf = fopen(plist, "w");
-    if (!pf || fputs(ents, pf) == EOF) {
-        log_error("patch_restored_external: failed to write plist\n");
-        if (pf) fclose(pf);
-        free(ents);
-        unlink(hax);
-        return -1;
-    }
-    fclose(pf);
-    free(ents);
-
-    char *sflag = dup_printf("-S%s", plist);
-    if (!sflag) {
-        log_error("patch_restored_external: out of memory for -S flag\n");
-        unlink(hax); unlink(plist);
-        return -1;
-    }
-    int ret = exec_tool(ldid2_bin, "-M", sflag, hax, NULL);
-    free(sflag);
-    unlink(plist);
-
-    if (ret != 0) {
-        log_error("patch_restored_external: ldid2 -M failed\n");
-        unlink(hax);
-        return -1;
-    }
-
-    if (file_copy(hax, dst_bin) != 0) {
-        log_error("patch_restored_external: failed to install patched binary "
-                  "('%s' → '%s')\n", hax, dst_bin);
-        unlink(hax);
-        return -1;
-    }
-
-    if (chmod(dst_bin, 0755) != 0) {
-        log_error("patch_restored_external: chmod dst_bin failed: %s\n",
-                  strerror(errno));
-        unlink(hax);
-        return -1;
-    }
-
-    unlink(hax);
-    return 0;
-}
-
 static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 {
     log_info("Building ramdisk...");
@@ -1394,9 +1317,6 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     if (shell_cmd("rsync --ignore-existing -auK '%s/sshd/' '%s/'", ctx->mount, ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: rsync of sshd tree failed");
 
-    if (patch_restored_external_in_ramdisk(ctx) != 0)
-        RDSK_FAIL("stage_build_ramdisk: patch_restored_external failed");
-
     if (shell_cmd(
             "for d in"
             " '%1$s/bin'"
@@ -1412,9 +1332,6 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
             "cd '%s' && rm -rf "
             "./sshd "
             "./usr/local/standalone/firmware/* "
-            "./usr/share/progressui "
-            "./etc/apt "
-            "./etc/dpkg",
             ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: cleanup pass failed");
 
