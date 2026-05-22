@@ -13,9 +13,8 @@
  * Shell usage
  * ───────────
  * popen() is used only for calls that are irreducibly shell-based
- * (hdiutil, tar, rsync) or for external tools whose stdout must be
- * captured (ldid2 -e).  All other tool invocations use exec_tool(),
- * which bypasses /bin/sh entirely.
+ * (hdiutil, tar) or for macOS-specific tools that have no C API.
+ * All other tool invocations use exec_tool(),
  */
 
 #include <dirent.h>
