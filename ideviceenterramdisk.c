@@ -1205,7 +1205,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     if (shell_cmd("hdiutil resize -size 208MB '%s'", rdsk_dmg) != 0)
         return -1;
-    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s'", rdsk_dmg, ctx->mount) != 0)
+    if (shell_cmd("hdiutil attach '%s' -mountpoint '%s' -owners on", rdsk_dmg, ctx->mount) != 0)
         return -1;
 
     /* Wait up to ~5 s for the mount to become usable. */
