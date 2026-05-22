@@ -1249,7 +1249,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     }
     free(var_root); free(var_run);
 
-    if (shell_cmd("tar -C '%s' --preserve-permissions -xf '%s'",
+    if (shell_cmd("tar -C '%s' --preserve-permissions --numeric-owner -xf '%s'",
                   ctx->mount, ssh64_gz) != 0)
         RDSK_FAIL("stage_build_ramdisk: tar extract of ssh64 failed");
 
@@ -1476,8 +1476,7 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
     if (dfu_send_file(ctx->bootim_img4) != 0 ||
-        dfu_send_cmd("setpicture 0x1")    != 0 ||
-        dfu_send_cmd("bgcolor 0 0 0")   != 0)
+        dfu_send_cmd("setpicture 0x1")    != 0)
         log_warn("stage_boot_ramdisk: boot image setup failed (non-fatal)\n");
 
     /* ── Remaining payloads ──────────────────────────────────────────── */
