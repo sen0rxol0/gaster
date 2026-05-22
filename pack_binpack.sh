@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # split -b 2500000 ssh64.tar.gz ssh64.tar.gz_
+# tar -tzf ssh64.tar.gz | sort > ssh64tar.txt
 
 # ---------------------------------------------------------------------------
 # build_binpack.sh — assemble ssh64.tar.gz for gastera1n SSH ramdisk
@@ -58,6 +59,10 @@ coreutils_deb="coreutils_9.5_iphoneos-arm.deb"
 findutils_deb="findutils_4.6.0-2_iphoneos-arm.deb"
 shell_cmds_deb="shell-cmds_118-8_iphoneos-arm.deb"
 ncurses5_libs_deb="ncurses5-libs_5.9-1_iphoneos-arm.deb"
+plutil_deb="com.bingner.plutil_0.2.1_iphoneos-arm.deb"
+tar_deb="tar_1.33-1_iphoneos-arm.deb"
+launchctl_deb="launchctl-25_iphoneos-arm.deb"
+sed_deb="sed_4.5-1_iphoneos-arm.deb"
 # Core filesystem tools — mv, cp, chmod, chown, mkdir, rm, cat, dd, chflags
 download "${BASE_PROCURSUS}/coreutils/$coreutils_deb"
 download "${BASE_BINGNER}/$findutils_deb"
@@ -68,11 +73,7 @@ download "${BASE_BINGNER}/$ncurses5_libs_deb"
 # download "${BASE_BINGNER}/ncurses_6.1+20181013-1_iphoneos-arm.deb"
 # download "${BASE_BINGNER}/readline_8.0-1_iphoneos-arm.deb"
 
-download "${BASE_BINGNER}/com.bingner.plutil_0.2.1_iphoneos-arm.deb"
-download "${BASE_BINGNER}/tar_1.33-1_iphoneos-arm.deb"
-download "${BASE_BINGNER}/launchctl-25_iphoneos-arm.deb"
-
-download "${BASE_BINGNER}/sed_4.5-1_iphoneos-arm.deb"
+download "${BASE_BINGNER}/$sed_deb"
 download "${BASE_BINGNER}/grep_3.1-1_iphoneos-arm.deb"
 download "${BASE_BINGNER}/bash_5.0.3-2_iphoneos-arm.deb"
 # openssh — sshd and scp, the actual transport layer
@@ -81,6 +82,11 @@ download "${BASE_BINGNER}/openssh-server_8.4-3_iphoneos-arm.deb"
 download "${BASE_BINGNER}/openssh-client_8.4-3_iphoneos-arm.deb"
 # dropbear — self-contained sshd + ssh client
 download "${BASE_PROCURSUS}/dropbear_2020.81_iphoneos-arm.deb"
+
+download "${BASE_BINGNER}/$plutil_deb"
+download "${BASE_BINGNER}/$tar_deb"
+download "${BASE_BINGNER}/$launchctl_deb"
+
 # ---------------------------------------------------------------------------
 # Extract
 # ---------------------------------------------------------------------------
@@ -129,16 +135,17 @@ extract_deb "${DEBS}/$ncurses5_libs_deb"
 # extract_deb "${DEBS}/ncurses_6.1+20181013-1_iphoneos-arm.deb"
 # extract_deb "${DEBS}/readline_8.0-1_iphoneos-arm.deb"
 
-extract_deb "${DEBS}/sed_4.5-1_iphoneos-arm.deb"
+extract_deb "${DEBS}/$sed_deb"
 extract_deb "${DEBS}/grep_3.1-1_iphoneos-arm.deb"
 extract_deb "${DEBS}/bash_5.0.3-2_iphoneos-arm.deb"
-extract_deb "${DEBS}/tar_1.33-1_iphoneos-arm.deb"
-extract_deb "${DEBS}/launchctl-25_iphoneos-arm.deb"
-extract_deb "${DEBS}/com.bingner.plutil_0.2.1_iphoneos-arm.deb"
 extract_deb "${DEBS}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
 extract_deb "${DEBS}/openssh-server_8.4-3_iphoneos-arm.deb"
 extract_deb "${DEBS}/openssh-client_8.4-3_iphoneos-arm.deb"
 extract_deb "${DEBS}/dropbear_2020.81_iphoneos-arm.deb"
+
+extract_deb "${DEBS}/$tar_deb"
+extract_deb "${DEBS}/$launchctl_deb"
+extract_deb "${DEBS}/$plutil_deb"
 
 log "Pruning unnecessary files"
 
@@ -608,14 +615,39 @@ sign_dir "usr/libexec"  "${ENTS_BASIC}"
 # ---------------------------------------------------------------------------
 # Permissions
 # ---------------------------------------------------------------------------
-chmod -R 755 \
-    "${STAGING}/bin" \
-    "${STAGING}/usr/bin" \
-    "${STAGING}/usr/libexec" \
-    2>/dev/null || true
 
-[[ -d "${STAGING}/usr/sbin"      ]] && chmod -R 755 "${STAGING}/usr/sbin"
-[[ -d "${STAGING}/usr/local/bin" ]] && chmod -R 755 "${STAGING}/usr/local/bin"
+log "Normalizing permissions"
+
+# Directories
+find "${STAGING}" -type d -exec chmod 0755 {} +
+
+# Default all files to non-executable; executable dirs override below
+find "${STAGING}" -type f -exec chmod 0644 {} +
+
+# Executable binary directories
+chmod -R 755 "${STAGING}/bin"          2>/dev/null || true
+chmod -R 755 "${STAGING}/usr/bin"      2>/dev/null || true
+chmod -R 755 "${STAGING}/usr/libexec"  2>/dev/null || true
+[[ -d "${STAGING}/usr/sbin"       ]] && chmod -R 755 "${STAGING}/usr/sbin"
+[[ -d "${STAGING}/usr/local/bin"  ]] && chmod -R 755 "${STAGING}/usr/local/bin"
+
+# Dylibs — read-only, not executable
+find "${STAGING}/usr/lib" -name '*.dylib' -type f \
+    -exec chmod 0644 {} + 2>/dev/null || true
+
+# Dropbear host key — must be readable only by root
+chmod 0600 "${STAGING}/etc/dropbear/dropbear_rsa_host_key"
+
+# Normalize ownership to root:wheel.
+# On macOS wheel=GID 0; on Linux wheel=GID 0 when the group exists.
+# The warn path covers developer machines running without sudo.
+if chown -R root:wheel "${STAGING}" 2>/dev/null; then
+    log "Ownership set to root:wheel"
+else
+    warn "Could not set ownership to root:wheel — archive will embed current user's uid/gid"
+    warn "Re-run with sudo for a correctly-owned ramdisk tarball"
+fi
+
 
 # ---------------------------------------------------------------------------
 # Pack
@@ -627,7 +659,9 @@ mkdir -p "${STAGING}/private"
 mv "${STAGING}/etc" "${STAGING}/private/etc"
 
 log "Creating ${OUTPUT}"
-tar --preserve-permissions -czf "${OUTPUT}" -C "${STAGING}" .
+tar --preserve-permissions \
+    --uid 0 --gid 0 \
+    -czf "${OUTPUT}" -C "${STAGING}" .
 
 # rm -rf .binpack
 log "Done → ${OUTPUT}"
