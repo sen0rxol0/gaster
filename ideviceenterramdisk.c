@@ -1267,8 +1267,11 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
         RDSK_FAIL("stage_build_ramdisk: chmod on merged binary dirs failed");
     */
     
-    if (shell_cmd("rm -rf '%s'/usr/local/standalone/firmware/*", ctx->mount) != 0)
+    if (shell_cmd("rm -rf '%s'/usr/standalone/firmware/*", ctx->mount) != 0)
         RDSK_FAIL("stage_build_ramdisk: cleanup firmware failed");
+    
+    if (shell_cmd("rm -rf '%s'/usr/share/progressui", ctx->mount) != 0)
+        RDSK_FAIL("stage_build_ramdisk: cleanup progressui failed");
 
 detach:
     for (int i = 0; i < 3; i++) {
