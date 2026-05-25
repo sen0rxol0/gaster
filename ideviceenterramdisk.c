@@ -1248,7 +1248,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
     }
     free(var_root); free(var_run);
 
-    shell_cmd("rm -f '%s/usr/local/bin/restored_external'", ctx->mount)
+    shell_cmd("rm -f '%s/usr/local/bin/restored_external'", ctx->mount);
     
     if (shell_cmd("tar -C '%s' --preserve-permissions --numeric-owner -xf '%s'",
                   ctx->mount, ssh64_gz) != 0)
