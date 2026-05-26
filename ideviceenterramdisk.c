@@ -1250,7 +1250,7 @@ static int stage_build_ramdisk(rdsk_ctx_t *ctx)
 
     shell_cmd("rm -f '%s/usr/local/bin/restored_external'", ctx->mount);
     
-    if (shell_cmd("tar -C '%s' --preserve-permissions --numeric-owner -xf '%s'",
+    if (shell_cmd("tar -C '%s' --preserve-permissions -xf '%s'",
                   ctx->mount, ssh64_gz) != 0)
         RDSK_FAIL("stage_build_ramdisk: tar extract of ssh64 failed");
 
