@@ -69,23 +69,24 @@ ncurses5_libs_deb="ncurses5-libs_5.9-1_iphoneos-arm.deb"
 plutil_deb="com.bingner.plutil_0.2.1_iphoneos-arm.deb"
 tar_deb="tar_1.33-1_iphoneos-arm.deb"
 launchctl_deb="launchctl-25_iphoneos-arm.deb"
+readline_deb="readline_8.0-1_iphoneos-arm.deb"
 sed_deb="sed_4.5-1_iphoneos-arm.deb"
+grep_deb="grep_3.1-1_iphoneos-arm.deb"
+bash_deb="bash_5.0.3-2_iphoneos-arm.deb"
 # Core filesystem tools — mv, cp, chmod, chown, mkdir, rm, cat, dd, chflags
 download "${BASE_PROCURSUS}/coreutils/$coreutils_deb"
 download "${BASE_BINGNER}/$findutils_deb"
 # reboot, chflags
 download "${BASE_BINGNER}/$shell_cmds_deb"
 download "${BASE_BINGNER}/$ncurses5_libs_deb"
-
-# download "${BASE_BINGNER}/readline_8.0-1_iphoneos-arm.deb"
-
+download "${BASE_BINGNER}/$readline_deb"
 download "${BASE_BINGNER}/$sed_deb"
-download "${BASE_BINGNER}/grep_3.1-1_iphoneos-arm.deb"
-download "${BASE_BINGNER}/bash_5.0.3-2_iphoneos-arm.deb"
+download "${BASE_BINGNER}/$grep_deb"
+download "${BASE_BINGNER}/$bash_deb"
 # openssh — sshd and scp, the actual transport layer
-download "${BASE_BINGNER}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
-download "${BASE_BINGNER}/openssh-server_8.4-3_iphoneos-arm.deb"
-download "${BASE_BINGNER}/openssh-client_8.4-3_iphoneos-arm.deb"
+# download "${BASE_BINGNER}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
+# download "${BASE_BINGNER}/openssh-server_8.4-3_iphoneos-arm.deb"
+# download "${BASE_BINGNER}/openssh-client_8.4-3_iphoneos-arm.deb"
 
 download "${BASE_BINGNER}/$plutil_deb"
 download "${BASE_BINGNER}/$tar_deb"
@@ -132,15 +133,13 @@ extract_deb "${DEBS}/$coreutils_deb"
 extract_deb "${DEBS}/$findutils_deb"
 extract_deb "${DEBS}/$shell_cmds_deb"
 extract_deb "${DEBS}/$ncurses5_libs_deb"
-
-# extract_deb "${DEBS}/readline_8.0-1_iphoneos-arm.deb"
-
+extract_deb "${DEBS}/$readline_deb"
 extract_deb "${DEBS}/$sed_deb"
-extract_deb "${DEBS}/grep_3.1-1_iphoneos-arm.deb"
-extract_deb "${DEBS}/bash_5.0.3-2_iphoneos-arm.deb"
-extract_deb "${DEBS}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
-extract_deb "${DEBS}/openssh-server_8.4-3_iphoneos-arm.deb"
-extract_deb "${DEBS}/openssh-client_8.4-3_iphoneos-arm.deb"
+extract_deb "${DEBS}/$grep_deb"
+extract_deb "${DEBS}/$bash_deb"
+# extract_deb "${DEBS}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
+# extract_deb "${DEBS}/openssh-server_8.4-3_iphoneos-arm.deb"
+# extract_deb "${DEBS}/openssh-client_8.4-3_iphoneos-arm.deb"
 
 extract_deb "${DEBS}/$tar_deb"
 extract_deb "${DEBS}/$launchctl_deb"
@@ -148,23 +147,23 @@ extract_deb "${DEBS}/$plutil_deb"
 
 log "Pruning unnecessary files"
 
-# Remove everything OpenSSH installed
-rm -rf "${STAGING}/etc/ssh"
-rm -f  "${STAGING}/usr/sbin/sshd"
-rm -f  "${STAGING}/usr/libexec/ssh-"*
-rm -f  "${STAGING}/usr/libexec/sshd-keygen-wrapper"
-rm -f  "${STAGING}/usr/bin/ssh-"*
-# # OpenSSH binaries — replaced by dropbear
-# rm -f  "${STAGING}/usr/bin/ssh"
-rm -f  "${STAGING}/usr/bin/scp"
-# rm -f  "${STAGING}/usr/bin/sftp"
-# rm -f  "${STAGING}/usr/libexec/sftp-server"
-# # OpenSSL libs — dropbear has its own crypto, these came from openssh debs
-# rm -f  "${STAGING}/usr/lib/libssl.1.1.dylib"
-# rm -f  "${STAGING}/usr/lib/libssl.a"
-# rm -f  "${STAGING}/usr/lib/libcrypto.1.1.dylib"
-# rm -f  "${STAGING}/usr/lib/libcrypto.a"
-# rm -rf "${STAGING}/usr/lib/engines-1.1"
+# # Remove everything OpenSSH installed
+# rm -rf "${STAGING}/etc/ssh"
+# rm -f  "${STAGING}/usr/sbin/sshd"
+# rm -f  "${STAGING}/usr/libexec/ssh-"*
+# rm -f  "${STAGING}/usr/libexec/sshd-keygen-wrapper"
+# rm -f  "${STAGING}/usr/bin/ssh-"*
+# # # OpenSSH binaries — replaced by dropbear
+# # rm -f  "${STAGING}/usr/bin/ssh"
+# rm -f  "${STAGING}/usr/bin/scp"
+# # rm -f  "${STAGING}/usr/bin/sftp"
+# # rm -f  "${STAGING}/usr/libexec/sftp-server"
+# # # OpenSSL libs — dropbear has its own crypto, these came from openssh debs
+# # rm -f  "${STAGING}/usr/lib/libssl.1.1.dylib"
+# # rm -f  "${STAGING}/usr/lib/libssl.a"
+# # rm -f  "${STAGING}/usr/lib/libcrypto.1.1.dylib"
+# # rm -f  "${STAGING}/usr/lib/libcrypto.a"
+# # rm -rf "${STAGING}/usr/lib/engines-1.1"
 
 # Build-time only artifacts
 rm -rf "${STAGING}/usr/include"
@@ -252,9 +251,13 @@ fi
 # alpine
 # dropbearkey -t rsa -s 2048 -f /private/var/mobile/Downloads/dropbear_rsa_host_key
 # dropbearkey -t ed25519 -f /private/var/mobile/Downloads/dropbear_ed25519_host_key
+# dropbearkey -t ecdsa -f /private/var/mobile/Downloads/dropbear_ecdsa_host_key
+# dropbearkey -t dss -f /private/var/mobile/Downloads/dropbear_dss_host_key
 # exit
 # scp -P2222 root@localhost:/private/var/mobile/Downloads/dropbear_rsa_host_key ./dropbear_rsa_host_key
 # scp -P2222 root@localhost:/private/var/mobile/Downloads/dropbear_ed25519_host_key ./dropbear_ed25519_host_key
+# scp -P2222 root@localhost:/private/var/mobile/Downloads/dropbear_ecdsa_host_key ./dropbear_ecdsa_host_key
+# scp -P2222 root@localhost:/private/var/mobile/Downloads/dropbear_dss_host_key ./dropbear_dss_host_key
 # killall iproxy
 
 # ---------------------------------------------------------------------------
@@ -266,14 +269,13 @@ fi
 # ---------------------------------------------------------------------------
 log "Injecting Dropbear host key"
 mkdir -p "${STAGING}/etc/dropbear"
-[[ -f "${SCRIPT_DIR}/dropbear/dropbear_rsa_host_key" ]] \
-    || die "Required file not found: dropbear/dropbear_rsa_host_key"
-install -m 600 "${SCRIPT_DIR}/dropbear/dropbear_rsa_host_key" \
-    "${STAGING}/etc/dropbear/dropbear_rsa_host_key"
-[[ -f "${SCRIPT_DIR}/dropbear/dropbear_ed25519_host_key" ]] \
-    || die "Required file not found: dropbear/dropbear_ed25519_host_key"
-install -m 600 "${SCRIPT_DIR}/dropbear/dropbear_ed25519_host_key" \
-    "${STAGING}/etc/dropbear/dropbear_ed25519_host_key"
+
+for host_key in dropbear_rsa_host_key dropbear_ed25519_host_key dropbear_ecdsa_host_key dropbear_dss_host_key; do
+  [[ -f "${SCRIPT_DIR}/dropbear/${host_key}" ]] \
+      || die "Required file not found: dropbear/${host_key}"
+  install -m 600 "${SCRIPT_DIR}/dropbear/${host_key}" \
+      "${STAGING}/etc/dropbear/${host_key}"
+done
 
 log "Injecting Dropbear binaries"
 mkdir -p "${STAGING}/usr/local/bin"
