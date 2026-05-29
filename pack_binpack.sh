@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# sudo LDID=/Applications/ra1ntool.app/Contents/MacOS/bin/gastera1n/ldid2 ./pack_binpack.sh
 # split -b 2500000 ssh64.tar.gz ssh64.tar.gz_
 # tar -tzf ssh64.tar.gz | sort > ssh64tar.txt
+
+# tar -C ssh64/ --preserve-permissions -xf ssh64.tar.gz
 
 # ---------------------------------------------------------------------------
 # build_binpack.sh — assemble ssh64.tar.gz for gastera1n SSH ramdisk
@@ -55,6 +58,10 @@ BASE_BINGNER="https://apt.bingner.com/debs/1443.00"
 # iOS 14+
 BASE_PROCURSUS="https://apt.procurs.us/pool/main/iphoneos-arm64/1700"
 
+# https://apt.procurs.us/pool/main/iphoneos-arm64/1700/libtommath1_1.2.0_iphoneos-arm.deb
+# https://apt.procurs.us/pool/main/iphoneos-arm64/1700/libtomcrypt1_1.18.2_iphoneos-arm.deb
+# https://apt.procurs.us/pool/main/iphoneos-arm64/1700/openpam/libpam2_20230627_iphoneos-arm.deb
+
 coreutils_deb="coreutils_9.5_iphoneos-arm.deb"
 findutils_deb="findutils_4.6.0-2_iphoneos-arm.deb"
 shell_cmds_deb="shell-cmds_118-8_iphoneos-arm.deb"
@@ -70,7 +77,6 @@ download "${BASE_BINGNER}/$findutils_deb"
 download "${BASE_BINGNER}/$shell_cmds_deb"
 download "${BASE_BINGNER}/$ncurses5_libs_deb"
 
-# download "${BASE_BINGNER}/ncurses_6.1+20181013-1_iphoneos-arm.deb"
 # download "${BASE_BINGNER}/readline_8.0-1_iphoneos-arm.deb"
 
 download "${BASE_BINGNER}/$sed_deb"
@@ -80,8 +86,6 @@ download "${BASE_BINGNER}/bash_5.0.3-2_iphoneos-arm.deb"
 download "${BASE_BINGNER}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
 download "${BASE_BINGNER}/openssh-server_8.4-3_iphoneos-arm.deb"
 download "${BASE_BINGNER}/openssh-client_8.4-3_iphoneos-arm.deb"
-# dropbear — self-contained sshd + ssh client
-download "${BASE_PROCURSUS}/dropbear_2020.81_iphoneos-arm.deb"
 
 download "${BASE_BINGNER}/$plutil_deb"
 download "${BASE_BINGNER}/$tar_deb"
@@ -109,9 +113,6 @@ extract_deb() {
     [[ -n "${data_archive}" ]] \
         || die "No data archive found in $(basename "${deb}")"
 
-    # Let tar auto-detect compression — works for gz, xz, zst.
-    #tar -xf "${data_archive}" -k -C "${STAGING}" 2>/dev/null || true
-
     case "${data_archive}" in
         *.tar.zst)
             zstd -d --stdout "${data_archive}" | tar -xf - -C "$STAGING"
@@ -132,7 +133,6 @@ extract_deb "${DEBS}/$findutils_deb"
 extract_deb "${DEBS}/$shell_cmds_deb"
 extract_deb "${DEBS}/$ncurses5_libs_deb"
 
-# extract_deb "${DEBS}/ncurses_6.1+20181013-1_iphoneos-arm.deb"
 # extract_deb "${DEBS}/readline_8.0-1_iphoneos-arm.deb"
 
 extract_deb "${DEBS}/$sed_deb"
@@ -141,20 +141,12 @@ extract_deb "${DEBS}/bash_5.0.3-2_iphoneos-arm.deb"
 extract_deb "${DEBS}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
 extract_deb "${DEBS}/openssh-server_8.4-3_iphoneos-arm.deb"
 extract_deb "${DEBS}/openssh-client_8.4-3_iphoneos-arm.deb"
-extract_deb "${DEBS}/dropbear_2020.81_iphoneos-arm.deb"
 
 extract_deb "${DEBS}/$tar_deb"
 extract_deb "${DEBS}/$launchctl_deb"
 extract_deb "${DEBS}/$plutil_deb"
 
 log "Pruning unnecessary files"
-
-rm -f  "${STAGING}/usr/libexec/dropbear-wrapper"
-# dropbear key management tools — key is pre-injected, not generated on device
-rm -f  "${STAGING}/usr/bin/dropbearconvert"
-rm -f  "${STAGING}/usr/bin/dropbearkey"
-# launchd plist — dropbear is started manually, not via launchd
-rm -rf "${STAGING}/Library"
 
 # Remove everything OpenSSH installed
 rm -rf "${STAGING}/etc/ssh"
@@ -164,7 +156,7 @@ rm -f  "${STAGING}/usr/libexec/sshd-keygen-wrapper"
 rm -f  "${STAGING}/usr/bin/ssh-"*
 # # OpenSSH binaries — replaced by dropbear
 # rm -f  "${STAGING}/usr/bin/ssh"
-# rm -f  "${STAGING}/usr/bin/scp"
+rm -f  "${STAGING}/usr/bin/scp"
 # rm -f  "${STAGING}/usr/bin/sftp"
 # rm -f  "${STAGING}/usr/libexec/sftp-server"
 # # OpenSSL libs — dropbear has its own crypto, these came from openssh debs
@@ -215,9 +207,9 @@ for bin in "${COREUTILS_REMOVE[@]}"; do
     rm -f "${STAGING}/bin/${bin}"
 done
 
+rm -rf "${STAGING}/usr/libexec/coreutils"
 # coreutils profile.d shim — sets PATH aliases, not needed
 rm -f "${STAGING}/etc/profile.d/coreutils.sh"
-
 # log "Stripping quarantine xattr from staging tree"
 # xattr -r -d com.apple.quarantine "${STAGING}" 2>/dev/null || true
 
@@ -258,18 +250,50 @@ fi
 # iproxy 2222 44 &
 # ssh root@localhost -p2222
 # alpine
-# dropbearkey -t rsa -f /private/var/mobile/Downloads/dropbear_rsa_host_key
+# dropbearkey -t rsa -s 2048 -f /private/var/mobile/Downloads/dropbear_rsa_host_key
+# dropbearkey -t ed25519 -f /private/var/mobile/Downloads/dropbear_ed25519_host_key
 # exit
 # scp -P2222 root@localhost:/private/var/mobile/Downloads/dropbear_rsa_host_key ./dropbear_rsa_host_key
+# scp -P2222 root@localhost:/private/var/mobile/Downloads/dropbear_ed25519_host_key ./dropbear_ed25519_host_key
 # killall iproxy
 
+# ---------------------------------------------------------------------------
+# Inject Dropbear host key and binaries
+#
+# dropbear, dbclient, and scp are built from source by build_dropbear_ios.sh
+# and expected alongside dropbear_rsa_host_key,dropbear_ed25519_host_key in the dropbear/ subdirectory.
+# restored_external invokes dropbear at /usr/local/bin/dropbear.
+# ---------------------------------------------------------------------------
 log "Injecting Dropbear host key"
 mkdir -p "${STAGING}/etc/dropbear"
 [[ -f "${SCRIPT_DIR}/dropbear/dropbear_rsa_host_key" ]] \
     || die "Required file not found: dropbear/dropbear_rsa_host_key"
 install -m 600 "${SCRIPT_DIR}/dropbear/dropbear_rsa_host_key" \
     "${STAGING}/etc/dropbear/dropbear_rsa_host_key"
+[[ -f "${SCRIPT_DIR}/dropbear/dropbear_ed25519_host_key" ]] \
+    || die "Required file not found: dropbear/dropbear_ed25519_host_key"
+install -m 600 "${SCRIPT_DIR}/dropbear/dropbear_ed25519_host_key" \
+    "${STAGING}/etc/dropbear/dropbear_ed25519_host_key"
 
+log "Injecting Dropbear binaries"
+mkdir -p "${STAGING}/usr/local/bin"
+mkdir -p "${STAGING}/usr/bin"
+
+for bin in dbclient dropbear scp; do
+    src="${SCRIPT_DIR}/dropbear/${bin}"
+    [[ -f "${src}" ]] \
+        || die "Required binary not found: dropbear/${bin} (run build_dropbear_ios.sh first)"
+    case "${bin}" in
+        scp)
+            install -m 755 "${src}" "${STAGING}/usr/bin/scp"
+            log "  injected: usr/bin/scp"
+            ;;
+        *)
+            install -m 755 "${src}" "${STAGING}/usr/local/bin/${bin}"
+            log "  injected: usr/local/bin/${bin}"
+            ;;
+    esac
+done
 # ---------------------------------------------------------------------------
 # Inject custom binaries
 #
@@ -310,22 +334,6 @@ log "  injected: restored_external"
 #
 #   (platform-application)  — binary is signed ad-hoc with platform-application set to true;
 # ---------------------------------------------------------------------------
-
-# snaputil
-# <?xml version="1.0" encoding="UTF-8"?>
-# <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-# <plist version="1.0">
-# <dict>
-# 	<key>platform-application</key>
-# 	<true/>
-# 	<key>com.apple.private.apfs.revert-to-snapshot</key>
-# 	<true/>
-# 	<key>com.apple.private.security.disk-device-access</key>
-# 	<true/>
-# 	<key>com.apple.private.vfs.snapshot</key>
-# 	<true/>
-# </dict>
-# </plist>
 
 # restored_external
 write_ents_restored_external() {
@@ -604,10 +612,11 @@ for bin in "${PRIV_BINARIES[@]}"; do
 done
 
 log "Signing userland binaries (basic entitlements)"
-sign_dir "bin"          "${ENTS_BASIC}"
-sign_dir "usr/bin"      "${ENTS_BASIC}"
-sign_dir "usr/sbin"     "${ENTS_BASIC}"
 sign_dir "usr/local/bin" "${ENTS_BASIC}"
+sign_dir "usr/sbin"     "${ENTS_BASIC}"
+sign_dir "usr/bin"      "${ENTS_BASIC}"
+sign_dir "bin"          "${ENTS_BASIC}"
+
 
 log "Signing libexec (basic entitlements)"
 sign_dir "usr/libexec"  "${ENTS_BASIC}"
@@ -625,11 +634,11 @@ find "${STAGING}" -type d -exec chmod 0755 {} +
 find "${STAGING}" -type f -exec chmod 0644 {} +
 
 # Executable binary directories
-chmod -R 755 "${STAGING}/bin"          2>/dev/null || true
-chmod -R 755 "${STAGING}/usr/bin"      2>/dev/null || true
-chmod -R 755 "${STAGING}/usr/libexec"  2>/dev/null || true
-[[ -d "${STAGING}/usr/sbin"       ]] && chmod -R 755 "${STAGING}/usr/sbin"
-[[ -d "${STAGING}/usr/local/bin"  ]] && chmod -R 755 "${STAGING}/usr/local/bin"
+chmod -R 0755 "${STAGING}/bin"          2>/dev/null || true
+chmod -R 0755 "${STAGING}/usr/bin"      2>/dev/null || true
+chmod -R 0755 "${STAGING}/usr/libexec"  2>/dev/null || true
+[[ -d "${STAGING}/usr/sbin"       ]] && chmod -R 0755 "${STAGING}/usr/sbin"
+[[ -d "${STAGING}/usr/local/bin"  ]] && chmod -R 0755 "${STAGING}/usr/local/bin"
 
 # Dylibs — read-only, not executable
 find "${STAGING}/usr/lib" -name '*.dylib' -type f \
@@ -637,17 +646,7 @@ find "${STAGING}/usr/lib" -name '*.dylib' -type f \
 
 # Dropbear host key — must be readable only by root
 chmod 0600 "${STAGING}/etc/dropbear/dropbear_rsa_host_key"
-
-# Normalize ownership to root:wheel.
-# On macOS wheel=GID 0; on Linux wheel=GID 0 when the group exists.
-# The warn path covers developer machines running without sudo.
-if chown -R root:wheel "${STAGING}" 2>/dev/null; then
-    log "Ownership set to root:wheel"
-else
-    warn "Could not set ownership to root:wheel — archive will embed current user's uid/gid"
-    warn "Re-run with sudo for a correctly-owned ramdisk tarball"
-fi
-
+chmod 0600 "${STAGING}/etc/dropbear/dropbear_ed25519_host_key"
 
 # ---------------------------------------------------------------------------
 # Pack
@@ -659,8 +658,8 @@ mkdir -p "${STAGING}/private"
 mv "${STAGING}/etc" "${STAGING}/private/etc"
 
 log "Creating ${OUTPUT}"
-tar --preserve-permissions \
-    --uid 0 --gid 0 \
+tar --uname root --uid 0 \
+    --gname wheel --gid 0 \
     -czf "${OUTPUT}" -C "${STAGING}" .
 
 # rm -rf .binpack
