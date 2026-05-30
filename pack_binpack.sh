@@ -146,6 +146,8 @@ extract_deb "${DEBS}/$plutil_deb"
 
 log "Pruning unnecessary files"
 
+rm -f  "${STAGING}/usr/bin/su"
+
 # ncurses build tools — not useful on ramdisk
 rm -f  "${STAGING}/usr/bin/captoinfo"
 rm -f  "${STAGING}/usr/bin/infocmp"
@@ -228,6 +230,14 @@ rm -f "${STAGING}/etc/profile.d/coreutils.sh"
 # log "Stripping quarantine xattr from staging tree"
 # xattr -r -d com.apple.quarantine "${STAGING}" 2>/dev/null || true
 
+# find "${STAGING}" -type f | while read -r f; do
+#     file "$f" | grep -q "Mach-O" || continue
+#
+#     otool -L "$f" 2>/dev/null | tail -n +2 | while read -r lib _; do
+#         printf "%s -> %s\n" "$f" "$lib"
+#     done
+# done
+
 # ---------------------------------------------------------------------------
 # Inject required dylibs
 #
@@ -240,7 +250,7 @@ rm -f "${STAGING}/etc/profile.d/coreutils.sh"
 log "Injecting required dylibs"
 mkdir -p "${STAGING}/usr/lib"
 
-for lib in libiconv.2 libresolv.9; do
+for lib in libiconv.2 libresolv.9 libiosexec.1; do
     src="${SCRIPT_DIR}/lib/${lib}.dylib"
     [[ -f "${src}" ]] \
         || die "Required dylib not found: lib/${lib}"
@@ -250,15 +260,15 @@ done
 
 ln -sf libiconv.2.dylib "${STAGING}/usr/lib/libiconv.dylib"
 
-# libncurses.5.4 → libncurses.5.dylib symlink
-# The versioned name is what some binaries (bash, readline-linked tools)
-# encode in their LC_LOAD_DYLIB; the deb ships the .5 name only.
-if [[ -f "${STAGING}/usr/lib/libncurses.5.dylib" ]]; then
-    ln -sf libncurses.5.dylib "${STAGING}/usr/lib/libncurses.5.4.dylib"
-    log "  symlinked: libncurses.5.4.dylib → libncurses.5.dylib"
-else
-    warn "libncurses.5.dylib not found in staging — ncurses deb may not have extracted correctly"
-fi
+# # libncurses.5.4 → libncurses.5.dylib symlink
+# # The versioned name is what some binaries (bash, readline-linked tools)
+# # encode in their LC_LOAD_DYLIB; the deb ships the .5 name only.
+# if [[ -f "${STAGING}/usr/lib/libncurses.5.dylib" ]]; then
+#     ln -sf libncurses.5.dylib "${STAGING}/usr/lib/libncurses.5.4.dylib"
+#     log "  symlinked: libncurses.5.4.dylib → libncurses.5.dylib"
+# else
+#     warn "libncurses.5.dylib not found in staging — ncurses deb may not have extracted correctly"
+# fi
 
 # Dropbear generate key
 # run palera1n or checkra1n?
