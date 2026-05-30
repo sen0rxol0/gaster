@@ -58,14 +58,11 @@ BASE_BINGNER="https://apt.bingner.com/debs/1443.00"
 # iOS 14+
 BASE_PROCURSUS="https://apt.procurs.us/pool/main/iphoneos-arm64/1700"
 
-# https://apt.procurs.us/pool/main/iphoneos-arm64/1700/libtommath1_1.2.0_iphoneos-arm.deb
-# https://apt.procurs.us/pool/main/iphoneos-arm64/1700/libtomcrypt1_1.18.2_iphoneos-arm.deb
-# https://apt.procurs.us/pool/main/iphoneos-arm64/1700/openpam/libpam2_20230627_iphoneos-arm.deb
-
 coreutils_deb="coreutils_9.5_iphoneos-arm.deb"
-findutils_deb="findutils_4.6.0-2_iphoneos-arm.deb"
-shell_cmds_deb="shell-cmds_118-8_iphoneos-arm.deb"
+findutils_deb="findutils_4.9.0-1_iphoneos-arm.deb"
+shell_cmds_deb="shell-cmds_278-2_iphoneos-arm.deb"
 ncurses5_libs_deb="ncurses5-libs_5.9-1_iphoneos-arm.deb"
+ncurses6_deb="ncurses_6.1+20181013-1_iphoneos-arm.deb"
 plutil_deb="com.bingner.plutil_0.2.1_iphoneos-arm.deb"
 tar_deb="tar_1.33-1_iphoneos-arm.deb"
 launchctl_deb="launchctl-25_iphoneos-arm.deb"
@@ -75,10 +72,11 @@ grep_deb="grep_3.1-1_iphoneos-arm.deb"
 bash_deb="bash_5.0.3-2_iphoneos-arm.deb"
 # Core filesystem tools — mv, cp, chmod, chown, mkdir, rm, cat, dd, chflags
 download "${BASE_PROCURSUS}/coreutils/$coreutils_deb"
-download "${BASE_BINGNER}/$findutils_deb"
+download "${BASE_PROCURSUS}/findutils/$findutils_deb"
 # reboot, chflags
-download "${BASE_BINGNER}/$shell_cmds_deb"
+download "${BASE_PROCURSUS}/shell-cmds/$shell_cmds_deb"
 download "${BASE_BINGNER}/$ncurses5_libs_deb"
+download "${BASE_BINGNER}/$ncurses6_deb"
 download "${BASE_BINGNER}/$readline_deb"
 download "${BASE_BINGNER}/$sed_deb"
 download "${BASE_BINGNER}/$grep_deb"
@@ -119,7 +117,7 @@ extract_deb() {
             zstd -d --stdout "${data_archive}" | tar -xf - -C "$STAGING"
             ;;
         *)
-            tar -xf "${data_archive}" -k -C "${STAGING}"
+            tar -xf "${data_archive}" -C "${STAGING}"
             ;;
     esac
 
@@ -133,6 +131,7 @@ extract_deb "${DEBS}/$coreutils_deb"
 extract_deb "${DEBS}/$findutils_deb"
 extract_deb "${DEBS}/$shell_cmds_deb"
 extract_deb "${DEBS}/$ncurses5_libs_deb"
+extract_deb "${DEBS}/$ncurses6_deb"
 extract_deb "${DEBS}/$readline_deb"
 extract_deb "${DEBS}/$sed_deb"
 extract_deb "${DEBS}/$grep_deb"
@@ -146,6 +145,23 @@ extract_deb "${DEBS}/$launchctl_deb"
 extract_deb "${DEBS}/$plutil_deb"
 
 log "Pruning unnecessary files"
+
+# ncurses build tools — not useful on ramdisk
+rm -f  "${STAGING}/usr/bin/captoinfo"
+rm -f  "${STAGING}/usr/bin/infocmp"
+rm -f  "${STAGING}/usr/bin/infotocap"
+rm -f  "${STAGING}/usr/bin/tic"
+rm -f  "${STAGING}/usr/bin/toe"
+rm -f  "${STAGING}/usr/bin/tput"
+rm -f  "${STAGING}/usr/bin/tset"
+rm -f  "${STAGING}/usr/bin/ncurses6-config"
+rm -f  "${STAGING}/usr/bin/ncursesw6-config"
+
+# _ncurses stub dylibs — these are just shims pointing into the real ones
+rm -rf "${STAGING}/usr/lib/_ncurses"
+
+# tabset files — terminfo is already there, tabset is legacy BSD tab stop data
+rm -rf "${STAGING}/usr/share/tabset"
 
 # # Remove everything OpenSSH installed
 # rm -rf "${STAGING}/etc/ssh"
@@ -264,17 +280,17 @@ fi
 # Inject Dropbear host key and binaries
 #
 # dropbear, dbclient, and scp are built from source by build_dropbear_ios.sh
-# and expected alongside dropbear_rsa_host_key,dropbear_ed25519_host_key in the dropbear/ subdirectory.
+# and expected alongside dropbear_*_host_key in the dropbear/ subdirectory.
 # restored_external invokes dropbear at /usr/local/bin/dropbear.
 # ---------------------------------------------------------------------------
-log "Injecting Dropbear host key"
+log "Injecting Dropbear host keys"
 mkdir -p "${STAGING}/etc/dropbear"
 
-for host_key in dropbear_rsa_host_key dropbear_ed25519_host_key dropbear_ecdsa_host_key dropbear_dss_host_key; do
-  [[ -f "${SCRIPT_DIR}/dropbear/${host_key}" ]] \
-      || die "Required file not found: dropbear/${host_key}"
-  install -m 600 "${SCRIPT_DIR}/dropbear/${host_key}" \
-      "${STAGING}/etc/dropbear/${host_key}"
+for ktype in rsa ed25519 ecdsa dss; do
+  loc="dropbear/dropbear_${ktype}_host_key"
+  [[ -f "${SCRIPT_DIR}/${loc}" ]] \
+      || die "Required file not found: ${loc}"
+  install -m 600 "${SCRIPT_DIR}/${loc}" "${STAGING}/etc/${loc}"
 done
 
 log "Injecting Dropbear binaries"
@@ -649,6 +665,8 @@ find "${STAGING}/usr/lib" -name '*.dylib' -type f \
 # Dropbear host key — must be readable only by root
 chmod 0600 "${STAGING}/etc/dropbear/dropbear_rsa_host_key"
 chmod 0600 "${STAGING}/etc/dropbear/dropbear_ed25519_host_key"
+chmod 0600 "${STAGING}/etc/dropbear/dropbear_ecdsa_host_key"
+chmod 0600 "${STAGING}/etc/dropbear/dropbear_dss_host_key"
 
 # ---------------------------------------------------------------------------
 # Pack
