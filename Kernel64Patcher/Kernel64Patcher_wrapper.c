@@ -155,37 +155,6 @@ static int get_ios_major(const char *kernel_path)
  * containing only the flags that the selected tool accepts.
  */
 
-static char **build_tool_argv(const char *tool_path,
-                              int argc, char *argv[],
-                              int ios)
-{
-    /* Minimum: wrapper requires <kernel_in>; <kernel_out> is optional but
-     * both tools expect it, so we validate here. */
-    if (argc < 3) {
-        fprintf(stderr,
-                "Usage: %s <kernel_in> <kernel_out> [flags...]\n", argv[0]);
-        return NULL;
-    }
-
-    char **new_argv = calloc((size_t)(argc + 1), sizeof(char *));
-    if (!new_argv) {
-        fprintf(stderr, "Out of memory building argv\n");
-        return NULL;
-    }
-
-    int out = 0;
-    new_argv[out++] = (char *)tool_path;  /* argv[0] = tool being exec'd    */
-    new_argv[out++] = argv[1];            /* kernel_in  (positional arg 1)  */
-    new_argv[out++] = argv[2];            /* kernel_out (positional arg 2)  */
-
-    if (ios < 15) {
-        new_argv[out++] = "-a"; 
-    }
-
-    new_argv[out] = NULL;
-    return new_argv;
-}
-
 int main(int argc, char *argv[])
 {
     if (argc < 3) {
@@ -226,11 +195,22 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    char **tool_argv = build_tool_argv(tool_path, argc, argv, ios);
+    char **tool_argv = calloc((size_t)(argc + 1), sizeof(char *));
     if (!tool_argv) {
-        unlink(tool_path);
-        return 1;
+        fprintf(stderr, "Out of memory building argv\n");
+        return NULL;
     }
+
+    int out = 0;
+    tool_argv[out++] = (char *)tool_path;  /* argv[0] = tool being exec'd    */
+    tool_argv[out++] = argv[1];            /* kernel_in  (positional arg 1)  */
+    tool_argv[out++] = argv[2];            /* kernel_out (positional arg 2)  */
+
+    if (ios < 15) {
+        tool_argv[out++] = "-a"; 
+    }
+
+    tool_argv[out] = NULL;
 
     execv(tool_path, tool_argv);
 
