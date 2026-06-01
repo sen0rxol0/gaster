@@ -175,8 +175,8 @@ int main(int argc, char *argv[])
     int rc;
 
     /*
-     * KPlooshFinder handles iOS 16+ (palera1n supports A8–A11, iOS 15–16).
-     * Kernel64Patcher (legacy) handles iOS 15 and below.
+     * KPlooshFinder handles iOS 15+ (palera1n supports A8–A11, iOS 15–16).
+     * Kernel64Patcher (legacy) handles iOS 14 and below.
      */
     if (ios >= 15) {
         printf("iOS %d >= 15: using embedded KPlooshFinder\n", ios);
@@ -195,10 +195,10 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    char **tool_argv = calloc((size_t)(argc + 1), sizeof(char *));
+    char **tool_argv = calloc(5, sizeof(char *));
     if (!tool_argv) {
         fprintf(stderr, "Out of memory building argv\n");
-        return NULL;
+        return 1;
     }
 
     int out = 0;
