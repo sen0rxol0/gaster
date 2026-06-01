@@ -28,8 +28,6 @@ bool found_task_conversion_eval_ldr = false;
 bool found_task_conversion_eval_bl = false;
 bool found_task_conversion_eval_imm = false;
 bool found_convert_port_to_map = false;
-bool found_devmode = false;
-bool text_has_devmode = false;
 
 uint32_t *fsctl_patchpoint = NULL;
 uint64_t vnode_open_addr = 0;
@@ -40,8 +38,6 @@ uint64_t ret0_gadget;
 uint32_t *shellcode_area;
 uint32_t *dyld_hook_patchpoint;
 uint32_t *nvram_patchpoint;
-uint32_t *rootdev_patchpoint;
-extern void* kernel_buf;
 
 bool patch_mac_mount(struct pf_patch_t *patch, uint32_t *stream) {
     uint32_t* mac_mount = stream;
@@ -483,7 +479,6 @@ bool patch_dyld(struct pf_patch_t *patch, uint32_t *stream) {
     }
     // Actual match check
     const char *str = pf_follow_xref(text_rbuf, stream + 5);
-    if (!str) return false;
     if(strcmp(str, "/usr/lib/dyld") != 0)
     {
         return false;
@@ -591,7 +586,6 @@ bool patch_nvram_table(struct pf_patch_t *patch, uint32_t *stream) {
         return false;
     }
     const char *str = pf_follow_xref(text_rbuf, stream + 2);
-    if (!str) return false;
     if (strcmp(str, "aapl,pci") != 0) {
         return false;
     }
@@ -793,55 +787,13 @@ static bool patch_convert_port_to_map(struct pf_patch_t *patch, uint32_t *stream
     return true;
 }
 
-static bool patch_rootdev(struct pf_patch_t *patch, uint32_t *stream) {
-    uint32_t adrp = stream[0],
-             add  = stream[1];
-    const char *str = pf_follow_xref(text_rbuf, stream);
-    if (!str) return false;
-    if(strcmp(str, "rootdev") != 0)
-    {
-        return false;
-    }
-
-    // Make sure this is the correct match
-    uint32_t *bl = pf_find_next(stream + 2, 6, 0x94000000, 0xfc000000);
-    if(!bl || (bl[1] & 0xff00001f) != 0x35000000 || (bl[2] & 0xfffffe1f) != 0x3900021f) // cbnz w0, ...; strb wzr, [x{16-31}]
-    {
-        return false;
-    }
-
-    if(rootdev_patchpoint)
-    {
-        printf("%s: Found twice\n", __FUNCTION__);
-        return false;
-    }
-    rootdev_patchpoint = stream;
-
-    printf("%s: Found rootdev\n", __FUNCTION__);
-    return true;
-}
-
-static bool patch_developer_mode(struct pf_patch_t *patch, uint32_t *stream) {
-    if (!text_has_devmode) return false;
-    if (found_devmode) {
-        printf("%s: Found twice!\n", __FUNCTION__);
-        return false;
-    }
-    found_devmode = true;
-    stream[5] = 0x14000000 | ((&stream[0] - &stream[5]) & 0x03ffffff); // uint32 takes care of >> 2
-
-    printf("%s: Found developer mode\n", __FUNCTION__);
-    return true;
-}
-
-void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptex, bool has_kmap, bool has_devmode){
+void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t text_addr, bool has_rootvp, bool has_cryptex, bool has_kmap) {
     text_rbuf = real_buf;
     text_sect_buf = text_buf;
     text_sect_addr = text_addr;
     text_has_rootvp = has_rootvp;
     text_has_cryptex = has_cryptex;
     text_has_kmap = has_kmap;
-    text_has_devmode = has_devmode;
 
     uint32_t mount_matches[] = {
         0x321f2fe9 // orr w9, wzr, 0x1ffe
@@ -1111,13 +1063,8 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
 
     struct pf_patch_t srrr = pf_construct_patch(srrr_matches, srrr_masks, sizeof(srrr_matches) / sizeof(uint32_t), (void *) patch_shared_region_root_dir);
 
-    uint32_t count = (_dyld_shc_end - _dyld_shc);
-    // get rid of this
-    {
-        count += (_sandbox_shellcode_end - _sandbox_shellcode);
-        count += 2; /* new rootdev string */
-        //+ (kdi_shc_end - kdi_shc) + (fsctl_shc_end - fsctl_shc);
-    }
+    uint32_t count = _sandbox_shellcode_end - _sandbox_shellcode;
+    count += (void *) _nvram_shc_end - (void *) _nvram_shc;
     uint32_t shc_matches[count];
     uint32_t shc_masks[count];
     for(size_t i = 0; i < count; ++i)
@@ -1126,28 +1073,6 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
         shc_masks[i] = 0xffffffff;
     }
     struct pf_patch_t shc = pf_construct_patch(shc_matches, shc_masks, sizeof(shc_matches) / sizeof(uint32_t), (void *) patch_shellcode_area);
-
-    uint32_t dyld_matches[] = {
-        0xaa1003e0, // mov x0, x{16-31}
-        0xaa1003e1, // mov x1, x{16-31}
-        0x94000000, // bl sym._strnlen
-        0xeb10001f, // cmp x0, x{16-31}
-        0x54000002, // b.hs 0x...
-        0x90000000, // adrp xN, "/usr/lib/dyld"@PAGE
-        0x91000000  // add xN, xN, "/usr/lib/dyld"@PAGEOFF
-    };
-    uint32_t dyld_masks[] =
-    {
-        0xfff0ffff,
-        0xfff0ffff,
-        0xfc000000,
-        0xfff0ffff,
-        0xff00001f,
-        0x9f000000,
-        0xffc00000
-    };
-
-    struct pf_patch_t dyld = pf_construct_patch(dyld_matches, dyld_masks, sizeof(dyld_matches) / sizeof(uint32_t), (void *) patch_dyld);
 
     uint32_t nvram_matches[] = {
         0xf8418c00, // ldr x*, [x*, 0x18]!
@@ -1206,15 +1131,15 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
 
     uint32_t nvram164_matches[] = {
         0x90000010, // adrp xN, 0x...
-        0x91000210, // add xN, xN, 0x...
+        0x91000210, // add xN, xN, 0x438
         0x90000000, // adrp x0, 0x...
-        0x91000000, // add x0, x0, 0x...
+        0x91000000, // add x0, x0, 0x32b
         0xaa1003e1, // mov x1, x{16-31}
         0x94000000, // bl sym._strcmp
         0x34000060, // cbz w0, .+12
-        0xf8400c00, // ldr x0, [xN, ...]!
+        0xf8410e00, // ldr x0, [xN, 0x10]!
         0xb5ffff80, // cbnz x0, .-16
-        0xf9400610, // ldr x{16-31}, [xN, 8]
+        0xf9400610  // ldr x{16-31}, [xN, 8]
     };
     uint32_t nvram164_masks[] = {
         0x9f000010,
@@ -1224,238 +1149,23 @@ void text_exec_patches(void *real_buf, void *text_buf, size_t text_len, uint64_t
         0xfff0ffff,
         0xfc000000,
         0xffffffff,
-        0xffe00c1f,
+        0xfffffe1f,
         0xffffffff,
-        0xfffffe10,
+        0xfffffe10
     };
 
     struct pf_patch_t nvram164 = pf_construct_patch(nvram164_matches, nvram164_masks, sizeof(nvram164_matches) / sizeof(uint32_t), (void *) patch_nvram_table);
 
-    // r2: /x 000040b900005036000040b900005036:0000c0ff0000f8ff0000c0ff0000f8fe
-    uint32_t tce_matches[] = {
-        0xb9400000, // ldr x*, [x*]
-        0x36500000, // tbz w*, 0xa, *
-        0xb9400000, // ldr x*, [x*]
-        0x36500000  // tbz w*, 0xa, *
-    };
-    uint32_t tce_masks[] = {
-        0xffc00000,
-        0xfff80000,
-        0xffc00000,
-        0xfef80000  // match both tbz or tbnz
-    };
-
-    struct pf_patch_t tce = pf_construct_patch(tce_matches, tce_masks, sizeof(tce_matches) / sizeof(uint32_t), (void *) patch_task_conversion_eval_ldr);
-
-    uint32_t tce_matches_bl[] = {
-        0xaa0003e0, // mov x0, xN
-        0x94000000, // bl 0x{same}
-        0x34000000, // cbz w0, 0x...
-        0xaa1003e0, // mov x0, x{16-31}
-        0x94000000, // bl 0x{same}
-        0x34000000  // cb(n)z w0, 0x...
-    };
-    uint32_t tce_masks_bl[] = {
-        0xffe0ffff,
-        0xfc000000,
-        0xff00001f,
-        0xfff0ffff,
-        0xfc000000,
-        0xfe00001f
-    };
-
-    struct pf_patch_t tce_bl = pf_construct_patch(tce_matches_bl, tce_masks_bl, sizeof(tce_matches_bl) / sizeof(uint32_t), (void *) patch_task_conversion_eval_bl);
-
-    uint32_t tce_matches_imm[] = {
-        0x12002400, // and w*, w*, 0x3ff
-        0x7100141f, // cmp w*, 5
-        0x54000001, // b.ne 0x...
-        0xf9400400, // ldr x*, [x*, 0x...]
-        0xeb00001f, // cmp x*, x*
-        0x54000001, // b.ne 0x...
-        0x39400400, // ldrb w*, [x*, 0x... & 0x1]
-        0x36100000  // tbz w*, 2, 0x...
-    };
-    uint32_t tce_masks_imm[] = {
-        0xfffffc00,
-        0xfffffc1f,
-        0xff00001f,
-        0xfffffc00,
-        0xffe0fc1f,
-        0xff00001f,
-        0xffc00400,
-        0xfef80000
-    };
-
-    struct pf_patch_t tce_imm = pf_construct_patch(tce_matches_imm, tce_masks_imm, sizeof(tce_matches_imm) / sizeof(uint32_t), (void *) patch_task_conversion_eval_imm);
-
-    uint32_t kmap_matches[] = {
-        0x39400000, // ldr(b) wN, [xM, ...]
-        0x34000000, // cbz
-        0xf9400000, // ldr xN, [xM, {0x0-0x78}]
-        0xf9402000, // ldr xN, [xM, {0x40|0x48}]
-        0x90000000, // adrp
-        0xf9400000, // ldr xN, [xM, ...]
-        0xeb00001f, // cmp
-        0x54000000  // b.ne / b.eq
-    };
-    uint32_t kmap_masks[] = {
-        0x7fc00000,
-        0xff000000,
-        0xffffc000,
-        0xfffff800,
-        0x9f000000,
-        0xffc00000,
-        0xffe0fc1f,
-        0xff00001e
-    };
-
-    struct pf_patch_t kmap = pf_construct_patch(kmap_matches, kmap_masks, sizeof(kmap_matches) / sizeof(uint32_t), (void *) patch_convert_port_to_map);
-
-    uint32_t kmap_matches_alt[] = {
-        0x39400000, // ldr(b) wN, [xM, ...]
-        0x34000000, // cbz
-        0xf9400000, // ldr xN, [xM, {0x0-0x78}]
-        0xf9402000, // ldr xN, [xM, {0x40|0x48}]
-        nop,
-        0x58000000, // ldr
-        0xeb00001f, // cmp
-        0x54000000  // b.ne / b.eq
-    };
-    uint32_t kmap_masks_alt[] = {
-        0x7fc00000,
-        0xff000000,
-        0xffffc000,
-        0xfffff800,
-        0xffffffff,
-        0xff000000,
-        0xffe0fc1f,
-        0xff00001e
-    };
-
-    struct pf_patch_t kmap_alt = pf_construct_patch(kmap_matches_alt, kmap_masks_alt, sizeof(kmap_matches_alt) / sizeof(uint32_t), (void *) patch_convert_port_to_map);
-
-    uint32_t kmap_matches155[] = {
-        0x39400000, // ldrb wN, [xM, ...]
-        0x34000000, // cbz
-        0xf9400000, // ldr xN, [xM, {0x0-0x78}]
-        0xf9402000, // ldr xN, [xM, {0x40|0x48}]
-        0x90000000, // adrp
-        0x91000000, // add
-        0xeb00001f, // cmp
-        0x54000000  // b.ne / b.eq
-    };
-    uint32_t kmap_masks155[] = {
-        0xffc00000,
-        0xff000000,
-        0xffffc000,
-        0xfffff800,
-        0x9f000000,
-        0xffc00000,
-        0xffe0fc1f,
-        0xff00001e
-    };
-
-    struct pf_patch_t kmap155 = pf_construct_patch(kmap_matches155, kmap_masks155, sizeof(kmap_matches155) / sizeof(uint32_t), (void *) patch_convert_port_to_map);
-
-    // A ton of kexts check for "rd=md*" and "rootdev=md*" in order to determine whether we're restoring.
-    // We previously tried to patch all of those, but that is really tedious to do, and it's basically
-    // impossible to determine whether you found all instances.
-    // What we do now is just change the place that actually boots off the ramdisk from "rootdev" to "spartan",
-    // and then patch the boot-args string to reflect that.
-    //
-    // Because codegen orders function args differently across versions and may or may not inline stuff,
-    // we just match adrp+add to either x0 or x1, and check the string and the rest in the callback.
-    //
-    // /x 0000009000000091:1e00009fde03c0ff
-    uint32_t rootdev_matches[] =
-    {
-        0x90000000, // adrp x{0|1}, 0x...
-        0x91000000, // add x{0|1}, x{0|1}, 0x...
-    };
-    uint32_t rootdev_masks[] =
-    {
-        0x9f00001e,
-        0xffc003de,
-    };
-    struct pf_patch_t rootdev = pf_construct_patch(rootdev_matches, rootdev_masks, sizeof(rootdev_matches)/sizeof(uint32_t), (void*)patch_rootdev);
-
-    // Find enable_developer_mode and disable_developer_mode in AMFI,
-    // then we patch the latter to branch to the former
-    //
-    // Example from iPad 6th gen iOS 16.0 beta 3:
-    // ;-- _enable_developer_mode:
-    // 0xfffffff007633f74      681300f0       adrp x8, 0xfffffff0078a2000
-    // 0xfffffff007633f78      08810291       add x8, x8, 0xa0
-    // 0xfffffff007633f7c      29008052       movz w9, 0x1
-    // 0xfffffff007633f80      09fd9f08       stlrb w9, [x8]
-    // 0xfffffff007633f84      c0035fd6       ret
-    // ;-- _disable_developer_mode:
-    // 0xfffffff007633f88      681300f0       adrp x8, 0xfffffff0078a2000
-    // 0xfffffff007633f8c      08810291       add x8, x8, 0xa0
-    // 0xfffffff007633f90      1ffd9f08       stlrb wzr, [x8]
-    // 0xfffffff007633f94      c0035fd6       ret
-    // /x 08000090080100912900805209010008c0035fd6080000900801009109010008c0035fd6:1f00009fff038097ffffffffff0360ceffffffff1f00009fff038097e90360ceffffffff
-
-    uint32_t devmode_matches[] = {
-        0x90000008, // adrp x8, ...
-        0x91000108, // {ldr,add} x8, [x8, ...]
-        0x52800029, // mov w9, #0x1
-        0x08000109, // str{l,}b w9, [x8]
-        ret, // ret
-        0x90000008, // adrp x8, ...
-        0x91000108, // {ldr,add} x8, [x8, ...]
-        0x08000109, // str{l,}b wzr, [x8]
-        ret, // ret
-    };
-    uint32_t devmode_masks[] = {
-        0x9f00001f,
-        0x978003ff,
-        0xffffffff,
-        0xce6003ff,
-        0xffffffff,
-        0x9f00001f,
-        0x978003ff,
-        0xce6003e9,
-        0xffffffff,
-    };
-    struct pf_patch_t developer_mode = pf_construct_patch(devmode_matches, devmode_masks, sizeof(devmode_matches) / sizeof(uint32_t), (void *) patch_developer_mode);
-
     struct pf_patch_t patches[] = {
-        mac_mount_patch,
-        mac_mount_patch_alt,
-        mac_unmount,
-        vm_prot_old,
-        vm_prot_new,
-        vm_prot_new_alt,
-        vm_prot_inline,
-        vm_prot17,
-        vmf_enter,
-        vmf_enter_alt,
-        vmf_enter14,
-        vmf_enter14_alt,
         vnode_getaddr,
         vnode_getpath,
         vnode_getpath_alt,
         ret0,
-        fsctl,
         vnode_oc,
-        rootvp,
-        srrr,
         shc,
-        dyld,
-        nvram,
-        nvram140,
-        nvram142,
-        nvram164,
-        tce,
-        tce_bl,
-        tce_imm,
-        kmap,
-        kmap_alt,
-        kmap155,
-        rootdev,
-        developer_mode
+        //nvram140,
+        //nvram142,
+        //nvram164
     };
 
     struct pf_patchset_t patchset = pf_construct_patchset(patches, sizeof(patches) / sizeof(struct pf_patch_t), (void *) pf_find_maskmatch32);
