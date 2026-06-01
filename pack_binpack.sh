@@ -63,32 +63,34 @@ findutils_deb="findutils_4.9.0-1_iphoneos-arm.deb"
 shell_cmds_deb="shell-cmds_278-2_iphoneos-arm.deb"
 ncurses5_libs_deb="ncurses5-libs_5.9-1_iphoneos-arm.deb"
 ncurses6_deb="ncurses_6.1+20181013-1_iphoneos-arm.deb"
-plutil_deb="com.bingner.plutil_0.2.1_iphoneos-arm.deb"
+plutil_deb="plutil_0.2.2-1_iphoneos-arm.deb"
 tar_deb="tar_1.33-1_iphoneos-arm.deb"
 launchctl_deb="launchctl-25_iphoneos-arm.deb"
-readline_deb="readline_8.0-1_iphoneos-arm.deb"
-sed_deb="sed_4.5-1_iphoneos-arm.deb"
-grep_deb="grep_3.1-1_iphoneos-arm.deb"
-bash_deb="bash_5.0.3-2_iphoneos-arm.deb"
+readline_deb="libreadline8_8.2.0_iphoneos-arm.deb"
+sed_deb="sed_4.9_iphoneos-arm.deb"
+grep_deb="grep_3.11_iphoneos-arm.deb"
+bash_deb="bash_5.2.21_iphoneos-arm.deb"
 # Core filesystem tools — mv, cp, chmod, chown, mkdir, rm, cat, dd, chflags
 download "${BASE_PROCURSUS}/coreutils/$coreutils_deb"
 download "${BASE_PROCURSUS}/findutils/$findutils_deb"
 # reboot, chflags
 download "${BASE_PROCURSUS}/shell-cmds/$shell_cmds_deb"
+download "${BASE_PROCURSUS}/readline/$readline_deb"
+download "${BASE_PROCURSUS}/sed/$sed_deb"
+download "${BASE_PROCURSUS}/grep/$grep_deb"
+download "${BASE_PROCURSUS}/bash/$bash_deb"
+download "${BASE_PROCURSUS}/$plutil_deb"
+
 download "${BASE_BINGNER}/$ncurses5_libs_deb"
 download "${BASE_BINGNER}/$ncurses6_deb"
-download "${BASE_BINGNER}/$readline_deb"
-download "${BASE_BINGNER}/$sed_deb"
-download "${BASE_BINGNER}/$grep_deb"
-download "${BASE_BINGNER}/$bash_deb"
+
+download "${BASE_BINGNER}/$tar_deb"
+download "${BASE_BINGNER}/$launchctl_deb"
+
 # openssh — sshd and scp, the actual transport layer
 # download "${BASE_BINGNER}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
 # download "${BASE_BINGNER}/openssh-server_8.4-3_iphoneos-arm.deb"
 # download "${BASE_BINGNER}/openssh-client_8.4-3_iphoneos-arm.deb"
-
-download "${BASE_BINGNER}/$plutil_deb"
-download "${BASE_BINGNER}/$tar_deb"
-download "${BASE_BINGNER}/$launchctl_deb"
 
 # ---------------------------------------------------------------------------
 # Extract
@@ -136,17 +138,20 @@ extract_deb "${DEBS}/$readline_deb"
 extract_deb "${DEBS}/$sed_deb"
 extract_deb "${DEBS}/$grep_deb"
 extract_deb "${DEBS}/$bash_deb"
-# extract_deb "${DEBS}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
-# extract_deb "${DEBS}/openssh-server_8.4-3_iphoneos-arm.deb"
-# extract_deb "${DEBS}/openssh-client_8.4-3_iphoneos-arm.deb"
 
 extract_deb "${DEBS}/$tar_deb"
 extract_deb "${DEBS}/$launchctl_deb"
 extract_deb "${DEBS}/$plutil_deb"
 
+# extract_deb "${DEBS}/libssl1.1.1_1.1.1n-1_iphoneos-arm.deb"
+# extract_deb "${DEBS}/openssh-server_8.4-3_iphoneos-arm.deb"
+# extract_deb "${DEBS}/openssh-client_8.4-3_iphoneos-arm.deb"
+
+ln -sf /usr/bin/bash "${STAGING}/bin/sh"
+
 log "Pruning unnecessary files"
 
-rm -f  "${STAGING}/usr/bin/su"
+rm -f  "${STAGING}/bin/su"
 
 # ncurses build tools — not useful on ramdisk
 rm -f  "${STAGING}/usr/bin/captoinfo"
@@ -156,6 +161,7 @@ rm -f  "${STAGING}/usr/bin/tic"
 rm -f  "${STAGING}/usr/bin/toe"
 rm -f  "${STAGING}/usr/bin/tput"
 rm -f  "${STAGING}/usr/bin/tset"
+rm -f  "${STAGING}/usr/bin/reset"
 rm -f  "${STAGING}/usr/bin/ncurses6-config"
 rm -f  "${STAGING}/usr/bin/ncursesw6-config"
 
@@ -164,24 +170,6 @@ rm -rf "${STAGING}/usr/lib/_ncurses"
 
 # tabset files — terminfo is already there, tabset is legacy BSD tab stop data
 rm -rf "${STAGING}/usr/share/tabset"
-
-# # Remove everything OpenSSH installed
-# rm -rf "${STAGING}/etc/ssh"
-# rm -f  "${STAGING}/usr/sbin/sshd"
-# rm -f  "${STAGING}/usr/libexec/ssh-"*
-# rm -f  "${STAGING}/usr/libexec/sshd-keygen-wrapper"
-# rm -f  "${STAGING}/usr/bin/ssh-"*
-# # # OpenSSH binaries — replaced by dropbear
-# # rm -f  "${STAGING}/usr/bin/ssh"
-# rm -f  "${STAGING}/usr/bin/scp"
-# # rm -f  "${STAGING}/usr/bin/sftp"
-# # rm -f  "${STAGING}/usr/libexec/sftp-server"
-# # # OpenSSL libs — dropbear has its own crypto, these came from openssh debs
-# # rm -f  "${STAGING}/usr/lib/libssl.1.1.dylib"
-# # rm -f  "${STAGING}/usr/lib/libssl.a"
-# # rm -f  "${STAGING}/usr/lib/libcrypto.1.1.dylib"
-# # rm -f  "${STAGING}/usr/lib/libcrypto.a"
-# # rm -rf "${STAGING}/usr/lib/engines-1.1"
 
 # Build-time only artifacts
 rm -rf "${STAGING}/usr/include"
@@ -230,6 +218,28 @@ rm -f "${STAGING}/etc/profile.d/coreutils.sh"
 # log "Stripping quarantine xattr from staging tree"
 # xattr -r -d com.apple.quarantine "${STAGING}" 2>/dev/null || true
 
+# # Remove everything OpenSSH installed
+# rm -rf "${STAGING}/etc/ssh"
+# rm -f  "${STAGING}/usr/sbin/sshd"
+# rm -f  "${STAGING}/usr/libexec/ssh-"*
+# rm -f  "${STAGING}/usr/libexec/sshd-keygen-wrapper"
+# rm -f  "${STAGING}/usr/bin/ssh-"*
+# # # OpenSSH binaries — replaced by dropbear
+# # rm -f  "${STAGING}/usr/bin/ssh"
+# rm -f  "${STAGING}/usr/bin/scp"
+# # rm -f  "${STAGING}/usr/bin/sftp"
+# # rm -f  "${STAGING}/usr/libexec/sftp-server"
+# # # OpenSSL libs — dropbear has its own crypto, these came from openssh debs
+# # rm -f  "${STAGING}/usr/lib/libssl.1.1.dylib"
+# # rm -f  "${STAGING}/usr/lib/libssl.a"
+# # rm -f  "${STAGING}/usr/lib/libcrypto.1.1.dylib"
+# # rm -f  "${STAGING}/usr/lib/libcrypto.a"
+# # rm -rf "${STAGING}/usr/lib/engines-1.1"
+
+# ---------------------------------------------------------------------------
+# Find all required dylibs
+# ---------------------------------------------------------------------------
+
 # find "${STAGING}" -type f | while read -r f; do
 #     file "$f" | grep -q "Mach-O" || continue
 #
@@ -250,7 +260,7 @@ rm -f "${STAGING}/etc/profile.d/coreutils.sh"
 log "Injecting required dylibs"
 mkdir -p "${STAGING}/usr/lib"
 
-for lib in libiconv.2 libresolv.9 libiosexec.1; do
+for lib in libiconv.2 libiosexec.1 libintl.8 libpcre2-8.0; do
     src="${SCRIPT_DIR}/lib/${lib}.dylib"
     [[ -f "${src}" ]] \
         || die "Required dylib not found: lib/${lib}"
@@ -260,18 +270,8 @@ done
 
 ln -sf libiconv.2.dylib "${STAGING}/usr/lib/libiconv.dylib"
 
-# # libncurses.5.4 → libncurses.5.dylib symlink
-# # The versioned name is what some binaries (bash, readline-linked tools)
-# # encode in their LC_LOAD_DYLIB; the deb ships the .5 name only.
-# if [[ -f "${STAGING}/usr/lib/libncurses.5.dylib" ]]; then
-#     ln -sf libncurses.5.dylib "${STAGING}/usr/lib/libncurses.5.4.dylib"
-#     log "  symlinked: libncurses.5.4.dylib → libncurses.5.dylib"
-# else
-#     warn "libncurses.5.dylib not found in staging — ncurses deb may not have extracted correctly"
-# fi
-
 # Dropbear generate key
-# run palera1n or checkra1n?
+# SSH into a jailbroken device palera1n/checkra1n
 # iproxy 2222 44 &
 # ssh root@localhost -p2222
 # alpine
@@ -345,6 +345,15 @@ log "  injected: mountfs"
     || die "Required binary not found in working directory: restored_external"
 install -m 755 "${restored_external_src}" "${STAGING}/usr/local/bin/restored_external"
 log "  injected: restored_external"
+
+log "Injecting /etc/profile"
+mkdir -p "${STAGING}/etc"
+
+profile_src="${SCRIPT_DIR}/profile"
+[[ -f "${profile_src}" ]] \
+    || die "Required file not found in working directory: profile"
+install -m 644 "${profile_src}" "${STAGING}/etc/profile"
+log "  injected: etc/profile"
 
 # ---------------------------------------------------------------------------
 # Entitlement sets
@@ -573,9 +582,10 @@ write_ents_basic             "${ENTS_BASIC}"
 
 
 DISK_BINARIES=(
-    "${STAGING}/usr/bin/dd"
     "${STAGING}/usr/bin/cat"
+    "${STAGING}/usr/bin/dd"
     "${STAGING}/usr/bin/plutil"
+    "${STAGING}/usr/bin/scp"
 )
 
 PRIV_BINARIES=(
