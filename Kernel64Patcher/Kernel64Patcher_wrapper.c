@@ -134,7 +134,7 @@ static int get_ios_major(const char *kernel_path)
  *
  * Flags understood by each tool:
  *
- *   Kernel64Patcher (legacy, iOS ≤ 15):
+ *   Kernel64Patcher (legacy, iOS < 15): <kernel_in> <kernel_out>
  *     -a  Patch AMFI
  *     -f  Patch AppleFirmwareUpdate img4 signature check
  *     -s  Patch SPUFirmwareValidation          (iOS 15 only)
@@ -149,52 +149,14 @@ static int get_ios_major(const char *kernel_path)
  *     -t  Patch tfp0
  *     -d  Patch developer mode
  *
- *   KPlooshFinder (iOS ≥ 16):
- *     -a  Patch AMFI
- *     -f  Patch AppleFirmwareUpdate img4 signature check
- *     -h  Patch is_root_hash_authentication_required_ios
- *     -l  Patch launchd path
- *     -t  Patch tfp0
- *     -d  Patch developer mode
- *     (iOS-15-only flags -s -r -o -e -u -p are NOT forwarded)
+ *   KPlooshFinder (iOS >= 15): <kernel_in> <kernel_out>
  *
  * The wrapper inspects the detected iOS version and builds a fresh argv[]
- * containing only the flags that the selected tool accepts, dropping any
- * version-inappropriate flags with a warning rather than passing garbage to
- * the underlying binary.
+ * containing only the flags that the selected tool accepts.
  */
 
-/* Flags valid for Kernel64Patcher (legacy, iOS ≤ 15) */
-static const char K64_FLAGS[] = "afSsroepuhltd";
-
-/* Flags valid for KPlooshFinder (iOS ≥ 16) */
-static const char KPF_FLAGS[] = "afhltd";
-
-/* iOS-15-only flags that must be dropped when targeting iOS 16+ */
-static const char IOS15_ONLY_FLAGS[] = "sroep";
-
-static int flag_allowed(char f, const char *allowed)
-{
-    for (; *allowed; allowed++)
-        if (*allowed == f) return 1;
-    return 0;
-}
-
-/*
- * Build the argv array to pass to execv.
- *
- * Layout:  tool_path  kernel_in  kernel_out  [accepted flags]  NULL
- *
- * We allocate (argc + 1) pointers — this is always enough because the
- * filtered flag list can only be shorter than (or equal to) the original.
- *
- * Returns a heap-allocated argv on success, NULL on allocation failure.
- * The caller owns the array but NOT the strings it points to (they are
- * aliases into the original argv or string literals).
- */
 static char **build_tool_argv(const char *tool_path,
                               int argc, char *argv[],
-                              const char *allowed_flags,
                               int ios)
 {
     /* Minimum: wrapper requires <kernel_in>; <kernel_out> is optional but
@@ -216,29 +178,8 @@ static char **build_tool_argv(const char *tool_path,
     new_argv[out++] = argv[1];            /* kernel_in  (positional arg 1)  */
     new_argv[out++] = argv[2];            /* kernel_out (positional arg 2)  */
 
-    /* Walk remaining args; each should be a flag of the form "-X" */
-    for (int i = 3; i < argc; i++) {
-        const char *arg = argv[i];
-
-        /* Accept single-char flags "-X" only; pass anything else through
-         * with a warning so unexpected long options aren't silently dropped */
-        if (arg[0] == '-' && arg[1] != '\0' && arg[2] == '\0') {
-            char f = arg[1];
-            if (flag_allowed(f, allowed_flags)) {
-                new_argv[out++] = (char *)arg;
-            } else if (flag_allowed(f, IOS15_ONLY_FLAGS)) {
-                fprintf(stderr,
-                        "Warning: flag -%c is iOS 15-only; "
-                        "dropping for iOS %d target\n", f, ios);
-            } else {
-                fprintf(stderr,
-                        "Warning: flag -%c is not recognised by the "
-                        "selected tool; dropping\n", f);
-            }
-        } else {
-            /* Non-flag argument (e.g. a value after a flag) — forward as-is */
-            new_argv[out++] = (char *)arg;
-        }
+    if (ios < 15) {
+        new_argv[out++] = "-a"; 
     }
 
     new_argv[out] = NULL;
@@ -263,24 +204,21 @@ int main(int argc, char *argv[])
 
     char tool_path[256];
     int rc;
-    const char *allowed_flags;
 
     /*
      * KPlooshFinder handles iOS 16+ (palera1n supports A8–A11, iOS 15–16).
      * Kernel64Patcher (legacy) handles iOS 15 and below.
      */
-    if (ios >= 16) {
-        printf("iOS %d >= 16: using embedded KPlooshFinder\n", ios);
+    if (ios >= 15) {
+        printf("iOS %d >= 15: using embedded KPlooshFinder\n", ios);
         rc = write_temp_exec("kpf",
                              KPlooshFinder, KPlooshFinder_len,
                              tool_path, sizeof(tool_path));
-        allowed_flags = KPF_FLAGS;
     } else {
-        printf("iOS %d < 16: using embedded Kernel64Patcher\n", ios);
+        printf("iOS %d < 15: using embedded Kernel64Patcher\n", ios);
         rc = write_temp_exec("k64",
                              Kernel64Patcher_legacy, Kernel64Patcher_legacy_len,
                              tool_path, sizeof(tool_path));
-        allowed_flags = K64_FLAGS;
     }
 
     if (rc != 0) {
@@ -288,8 +226,7 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    char **tool_argv = build_tool_argv(tool_path, argc, argv,
-                                       allowed_flags, ios);
+    char **tool_argv = build_tool_argv(tool_path, argc, argv, ios);
     if (!tool_argv) {
         unlink(tool_path);
         return 1;
