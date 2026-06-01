@@ -608,10 +608,10 @@ int main(int argc, char **argv) {
         return -1;
     }
     
-    #if (*(uint32_t*)kernel_buf == 0xbebafeca) {
+    /*#if (*(uint32_t*)kernel_buf == 0xbebafeca) {
     #    printf("%s: Detected fat macho kernel\n",__FUNCTION__);
     #    memmove(kernel_buf,kernel_buf+28,kernel_len);
-    #}
+    #}*/
 
     int is_fat = 0;
     void* fat_buf;
