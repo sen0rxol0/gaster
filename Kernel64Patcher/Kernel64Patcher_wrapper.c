@@ -102,7 +102,7 @@ static int get_ios_major(const char *kernel_path)
         char *p = memmem(buf, window, needle, nlen);
         if (p) {
             int darwin_major = atoi(p + nlen);
-            if (darwin_major >= 14) {
+            if (darwin_major >= 19) {
                 ios = darwin_major - 6;
                 printf("Detected kernelcache: Darwin %d → iOS %d\n",
                        darwin_major, ios);
