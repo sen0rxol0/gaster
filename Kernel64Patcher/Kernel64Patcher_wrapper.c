@@ -175,16 +175,16 @@ int main(int argc, char *argv[])
     int rc;
 
     /*
-     * KPlooshFinder handles iOS 15+ (palera1n supports A8–A11, iOS 15–16).
-     * Kernel64Patcher (legacy) handles iOS 14 and below.
+     * KPlooshFinder handles iOS 16+ (palera1n supports A8–A11, iOS 15–16).
+     * Kernel64Patcher (legacy) handles iOS 15 and below.
      */
-    if (ios >= 15) {
-        printf("iOS %d >= 15: using embedded KPlooshFinder\n", ios);
+    if (ios >= 16) {
+        printf("iOS %d >= 16: using embedded KPlooshFinder\n", ios);
         rc = write_temp_exec("kpf",
                              KPlooshFinder, KPlooshFinder_len,
                              tool_path, sizeof(tool_path));
     } else {
-        printf("iOS %d < 15: using embedded Kernel64Patcher\n", ios);
+        printf("iOS %d < 16: using embedded Kernel64Patcher\n", ios);
         rc = write_temp_exec("k64",
                              Kernel64Patcher_legacy, Kernel64Patcher_legacy_len,
                              tool_path, sizeof(tool_path));
@@ -195,23 +195,30 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    char **tool_argv = calloc(5, sizeof(char *));
-    if (!tool_argv) {
-        fprintf(stderr, "Out of memory building argv\n");
-        return 1;
-    }
-
+    char **tool_argv = calloc(argc + 2, sizeof(char *));
     int out = 0;
-    tool_argv[out++] = (char *)tool_path;  /* argv[0] = tool being exec'd    */
-    tool_argv[out++] = argv[1];            /* kernel_in  (positional arg 1)  */
-    tool_argv[out++] = argv[2];            /* kernel_out (positional arg 2)  */
-
-    if (ios < 15) {
-        tool_argv[out++] = "-a"; 
+  
+    tool_argv[out++] = tool_path;
+    tool_argv[out++] = argv[1];   // kernel_in
+    tool_argv[out++] = argv[2];   // kernel_out
+    
+    if (ios < 16) {
+  
+        tool_argv[out++] = "-a";
+  
+        if (ios == 16) {
+            tool_argv[out++] = "-p";
+        }
+      
+        // tool_argv[out++] = "-s";
+        // tool_argv[out++] = "-r";
+        // tool_argv[out++] = "-o";
+        // tool_argv[out++] = "-e";
+        // tool_argv[out++] = "-u";
     }
-
+    // KPlooshFinder takes no extra flags beyond kernel_in / kernel_out
+    
     tool_argv[out] = NULL;
-
     execv(tool_path, tool_argv);
 
     /* execv only returns on error */
