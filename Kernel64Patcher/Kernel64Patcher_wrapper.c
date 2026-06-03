@@ -175,16 +175,16 @@ int main(int argc, char *argv[])
     int rc;
 
     /*
-     * KPlooshFinder handles iOS 16+ (palera1n supports A8–A11, iOS 15–16).
-     * Kernel64Patcher (legacy) handles iOS 15 and below.
+     * KPlooshFinder handles iOS 15+ (palera1n supports A8–A11, iOS 15–16).
+     * Kernel64Patcher (legacy) handles iOS 14 and below.
      */
-    if (ios >= 16) {
-        printf("iOS %d >= 16: using embedded KPlooshFinder\n", ios);
+    if (ios >= 15) {
+        printf("iOS %d >= 15: using embedded KPlooshFinder\n", ios);
         rc = write_temp_exec("kpf",
                              KPlooshFinder, KPlooshFinder_len,
                              tool_path, sizeof(tool_path));
     } else {
-        printf("iOS %d < 16: using embedded Kernel64Patcher\n", ios);
+        printf("iOS %d < 15: using embedded Kernel64Patcher\n", ios);
         rc = write_temp_exec("k64",
                              Kernel64Patcher_legacy, Kernel64Patcher_legacy_len,
                              tool_path, sizeof(tool_path));
@@ -202,13 +202,13 @@ int main(int argc, char *argv[])
     tool_argv[out++] = argv[1];   // kernel_in
     tool_argv[out++] = argv[2];   // kernel_out
     
-    if (ios < 16) {
+    if (ios < 15) {
   
         tool_argv[out++] = "-a";
   
-        if (ios == 16) {
-            tool_argv[out++] = "-p";
-        }
+        //if (ios == 16) {
+        //    tool_argv[out++] = "-p";
+        //}
       
         // tool_argv[out++] = "-s";
         // tool_argv[out++] = "-r";
