@@ -143,6 +143,135 @@ fffffff006f33e30  9c 1f 67 06 f0 ff ff ff 00 00 00 00 00 00 00 00  ..g..........
 
     patch(text_exec_patches, text->addr, text->size, text->addr, rootvp_string_match != NULL, cryptex_string_match != NULL, kmap_port_string_match != NULL);
 
+    /*if (!found_amfi_mac_syscall) {
+        printf("%s: no amfi_mac_syscall\n", __FUNCTION__);
+        return;
+    } else if (!repatch_ldr_x19_vnode_pathoff) {
+        printf("%s: no repatch_ldr_x19_vnode_pathoff\n", __FUNCTION__);
+        return;
+    } else if (!found_sbops) {
+        printf("%s: no sbops?\n", __FUNCTION__);
+        return;
+    } else if (!amfi_ret) {
+        printf("%s: no amfi_ret?\n", __FUNCTION__);
+        return;
+    } else if (!vnode_lookup) {
+        printf("%s: no vnode_lookup\n", __FUNCTION__);
+        return;
+    } else if (!vnode_put) {
+        printf("%s: no vnode_put\n", __FUNCTION__);
+        return;
+    } else if (offsetof_p_flags == -1) {
+        printf("%s: no p_flags?\n", __FUNCTION__);
+        return;
+    } else if (!vfs_context_current) {
+        printf("%s: no vfs_context_current\n", __FUNCTION__);
+        return;
+    }
+
+    uint64_t shc_va = macho_ptr_to_va(kernel_buf, &shellcode_area[1]);
+    uint64_t ret_va = macho_ptr_to_va(kernel_buf, amfi_ret);
+
+    uint32_t delta = (shc_va - ret_va) / 4;
+
+    delta &= 0x03ffffff;
+    delta |= 0x14000000;
+    
+    *amfi_ret = delta;
+
+    uint64_t shc_addr = macho_ptr_to_va(kernel_buf, shellcode_area);
+
+    struct mac_policy_ops *sbops_struct = (struct mac_policy_ops *) sbops;
+
+    uint64_t ret0 = ret0_gadget & 0xffffffff;
+    uint64_t open_shc = shc_addr & 0xffffffff; 
+
+    patch_sbop(sbops_struct, mpo_mount_check_mount, ret0);
+    patch_sbop(sbops_struct, mpo_mount_check_remount, ret0);
+    patch_sbop(sbops_struct, mpo_mount_check_umount, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_write, ret0);
+    patch_sbop(sbops_struct, mpo_file_check_mmap, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_rename, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_access, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_chroot, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_create, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_deleteextattr, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_exchangedata, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_exec, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_getattrlist, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_getextattr, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_ioctl, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_link, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_listextattr, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_open, open_shc);
+    patch_sbop(sbops_struct, mpo_vnode_check_readlink, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_setattrlist, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_setextattr, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_setflags, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_setmode, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_setowner, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_setutimes, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_stat, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_truncate, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_unlink, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_fsgetpath, ret0);
+    patch_sbop(sbops_struct, mpo_vnode_check_getattr, ret0);
+    patch_sbop(sbops_struct, mpo_mount_check_stat, ret0);
+    patch_sbop(sbops_struct, mpo_proc_check_get_cs_info, ret0);
+    patch_sbop(sbops_struct, mpo_proc_check_set_cs_info, ret0);
+    uint64_t update_execve = sbops_struct->mpo_cred_label_update_execve;
+    patch_sbop(sbops_struct, mpo_cred_label_update_execve, open_shc + 8);
+
+    uint32_t *shellcode_from = _sandbox_shellcode;
+    uint32_t *shellcode_end = _sandbox_shellcode_end;
+    uint32_t *shellcode_to = shellcode_area;
+    // Identify where the LDR/STR insns that will need to be patched will be
+    uint32_t *repatch_sandbox_shellcode_setuid_patch = (void *) _sandbox_shellcode_setuid_patch - (void *) shellcode_from + (void *) shellcode_to;
+    uint64_t *repatch_sandbox_shellcode_ptrs = (uint64_t *)((void *) _sandbox_shellcode_ptrs - (void *) shellcode_from + (void *) shellcode_to);
+
+    while(shellcode_from < shellcode_end) {
+        *shellcode_to++ = *shellcode_from++;
+    }
+
+    if (repatch_sandbox_shellcode_ptrs[0] != 0x4141413341414132) {
+        printf("%s: Sandbox shellcode corruption\n", __FUNCTION__);
+        return;
+    }
+    // Patch offset into LDR and STR p->p_flags
+    repatch_sandbox_shellcode_setuid_patch[0] |= ((offsetof_p_flags >> 2) & 0x1ff) << 10;
+    repatch_sandbox_shellcode_setuid_patch[2] |= ((offsetof_p_flags >> 2) & 0x1ff) << 10;
+
+    uint64_t vnode_gaddr_p = macho_ptr_to_va(kernel_buf, vnode_gaddr);
+    uint64_t vfs_context_current_p = macho_ptr_to_va(kernel_buf, vfs_context_current);
+    uint64_t vnode_lookup_p = macho_ptr_to_va(kernel_buf, vnode_lookup);
+    uint64_t vnode_put_p = macho_ptr_to_va(kernel_buf, vnode_put);
+    // Patch shellcode pointers
+    repatch_sandbox_shellcode_ptrs[0] = update_execve;
+    repatch_sandbox_shellcode_ptrs[1] = vnode_gaddr_p;
+    repatch_sandbox_shellcode_ptrs[2] = vfs_context_current_p;
+    repatch_sandbox_shellcode_ptrs[3] = vnode_lookup_p;
+    repatch_sandbox_shellcode_ptrs[4] = vnode_put_p;
+
+    uint32_t *repatch_vnode_shellcode = &shellcode_area[5];
+    *repatch_vnode_shellcode = repatch_ldr_x19_vnode_pathoff;
+    if (nvram_patchpoint) {
+        uint64_t nvram_patch_from = macho_ptr_to_va(kernel_buf, nvram_patchpoint);
+        uint64_t nvram_patch_to = macho_ptr_to_va(kernel_buf, shellcode_to);
+        int64_t nvram_off = nvram_patch_to - nvram_patch_from;
+        if(nvram_off > 0x7fffffcLL || nvram_off < -0x8000000LL) {
+            printf("nvram_shc: jump too far\n");
+            return;
+        }
+
+        shellcode_from = _nvram_shc;
+        shellcode_end = _nvram_shc_end;
+        while(shellcode_from < shellcode_end) {
+            *shellcode_to++ = *shellcode_from++;
+        }
+
+        *nvram_patchpoint = 0x14000000 | (((uint64_t)nvram_off >> 2) & 0x3ffffff);
+    }*/
+
     if (!rootvp_string_match) {
         const char *snapshot = "com.apple.os.update-";
         struct section_64 *apfs_cstring = macho_find_section(apfs_kext, "__TEXT", "__cstring");
