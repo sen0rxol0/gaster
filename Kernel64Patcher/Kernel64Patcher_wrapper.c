@@ -208,7 +208,7 @@ int main(int argc, char *argv[])
   
         if (ios == 15) {
             tool_argv[out++] = "-p";
-            tool_argv[out++] = "-s";
+            //tool_argv[out++] = "-s";
         }
 
     }
