@@ -1482,7 +1482,8 @@ static int stage_boot_ramdisk(rdsk_ctx_t *ctx)
     /* ── Boot image (cosmetic — non-fatal) ───────────────────────────── */
     log_info("Setting boot image...");
     if (dfu_send_file(ctx->bootim_img4) != 0 ||
-        dfu_send_cmd("setpicture 0x1")    != 0)
+        dfu_send_cmd("setpicture 0")    != 0 ||
+        dfu_send_cmd("bgcolor 0 0 0")    != 0)
         log_warn("stage_boot_ramdisk: boot image setup failed (non-fatal)\n");
 
     /* ── Remaining payloads ──────────────────────────────────────────── */
