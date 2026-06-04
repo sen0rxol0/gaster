@@ -607,9 +607,19 @@ int main(int argc, char **argv) {
         printf("%s: Detected IMG4/IM4P, you have to unpack and decompress it!\n",__FUNCTION__);
         return -1;
     }
+
+    void *kernel_buf_fat = NULL;
     
     if (*(uint32_t*)kernel_buf == 0xbebafeca) {
         printf("%s: Detected fat macho kernel\n",__FUNCTION__);
+
+        kernel_buf_fat = (void*)malloc(28);
+        if(!kernel_buf_fat) {
+            printf("%s: Out of memory!\n", __FUNCTION__);
+            free(kernel_buf);
+            return -1;
+        }
+        memcpy(kernel_buf_fat, kernel_buf, 28);
         memmove(kernel_buf,kernel_buf+28,kernel_len);
     }
     
@@ -672,6 +682,12 @@ int main(int argc, char **argv) {
         printf("%s: Unable to open %s!\n", __FUNCTION__, argv[2]);
         free(kernel_buf);
         return -1;
+    }
+
+    if (kernel_buf_fat) {
+        memmove(kernel_buf, kernel_buf - 28, kernel_len);
+        memcpy(kernel_buf, kernel_buf_fat, 28);
+        free(kernel_buf_fat);
     }
     
     fwrite(kernel_buf, 1, kernel_len, fp);
