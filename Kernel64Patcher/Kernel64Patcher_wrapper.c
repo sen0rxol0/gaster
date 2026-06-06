@@ -134,7 +134,7 @@ static int get_ios_major(const char *kernel_path)
  *
  * Flags understood by each tool:
  *
- *   Kernel64Patcher (legacy, iOS <= 15): <kernel_in> <kernel_out>
+ *   Kernel64Patcher (legacy, iOS < 15): <kernel_in> <kernel_out>
  *     -a  Patch AMFI
  *     -f  Patch AppleFirmwareUpdate img4 signature check 
  *     -s  Patch SPUFirmwareValidation          (iOS 15 only)
@@ -149,7 +149,7 @@ static int get_ios_major(const char *kernel_path)
  *     -t  Patch tfp0
  *     -d  Patch developer mode
  *
- *   KPlooshFinder (iOS >= 16): <kernel_in> <kernel_out>
+ *   KPlooshFinder (iOS >= 15): <kernel_in> <kernel_out>
  *
  * The wrapper inspects the detected iOS version and builds a fresh argv[]
  * containing only the flags that the selected tool accepts.
@@ -178,13 +178,13 @@ int main(int argc, char *argv[])
      * KPlooshFinder handles iOS 15+ (palera1n supports A8–A11, iOS 15–16).
      * Kernel64Patcher (legacy) handles iOS 14 and below.
      */
-    if (ios >= 16) {
-        printf("iOS %d >= 16: using embedded KPlooshFinder\n", ios);
+    if (ios >= 15) {
+        printf("iOS 15+: using embedded KPlooshFinder\n");
         rc = write_temp_exec("kpf",
                              KPlooshFinder, KPlooshFinder_len,
                              tool_path, sizeof(tool_path));
     } else {
-        printf("iOS %d < 16: using embedded Kernel64Patcher\n", ios);
+        printf("iOS 13+: using embedded Kernel64Patcher\n");
         rc = write_temp_exec("k64",
                              Kernel64Patcher_legacy, Kernel64Patcher_legacy_len,
                              tool_path, sizeof(tool_path));
@@ -202,15 +202,8 @@ int main(int argc, char *argv[])
     tool_argv[out++] = argv[1];   // kernel_in
     tool_argv[out++] = argv[2];   // kernel_out
     
-    if (ios < 16) {
-  
+    if (ios < 15) {
         tool_argv[out++] = "-a";
-  
-        if (ios == 15) {
-            //tool_argv[out++] = "-p";
-            //tool_argv[out++] = "-s";
-        }
-
     }
     // KPlooshFinder takes no extra flags beyond kernel_in / kernel_out
     
