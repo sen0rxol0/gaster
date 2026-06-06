@@ -965,9 +965,6 @@ static int stage_prepare(rdsk_ctx_t *ctx,
 
     if (ctx_set_cache_dir(ctx, cache_dir_override) != 0) return -1;
 
-    /* Invalidate any existing cache before rebuilding. */
-    cache_invalidate(ctx);
-
     if (rm_rf(ctx->staging) != 0 && errno != ENOENT) {
         log_error("stage_prepare: failed to remove '%s'\n", ctx->staging);
         return -1;
@@ -1550,17 +1547,23 @@ int ideviceenterramdisk_load(const char *ios_version,
     }
 
     /*
-     * ramdiskBootMode fast path — if a valid per-device cache exists,
-     * skip the full build pipeline and boot directly from cached payloads.
+     * Always attempt a cache hit first — skip the full build pipeline
+     * if valid pre-built payloads exist for this device + iOS version.
      */
-    if (ramdiskBootMode) {
-        if (cache_load_for_boot(&ctx, ios_version, cache_dir_override) == 0)
-            return stage_boot_ramdisk(&ctx);
-
-        log_info("Cache miss — running full build pipeline...");
+    if (cache_load_for_boot(&ctx, ios_version, cache_dir_override) == 0) {
+        log_info("Cache hit — booting directly from cached payloads.");
+        return stage_boot_ramdisk(&ctx);
     }
 
+    log_info("Cache miss — running full build pipeline...");
+
+    /*
+     * Full build: stage_prepare() sets up the cache dir and staging area.
+     * Invalidate the (incomplete) cache now so stage_build_img4() starts
+     * clean, then rebuild from scratch.
+     */
     if (stage_prepare(&ctx, ios_version, cache_dir_override) != 0) return -1;
+    cache_invalidate(&ctx);   /* clear any partial cache before building */
     if (stage_download_images(&ctx) != 0) return -1;
     if (stage_decrypt(&ctx)         != 0) return -1;
     if (stage_patch(&ctx)           != 0) return -1;
