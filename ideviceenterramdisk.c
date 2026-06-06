@@ -1116,18 +1116,7 @@ static int stage_get_shsh(rdsk_ctx_t *ctx)
  * then produce a binary diff for the img4 stage.
  *
  * The wrapper selects Kernel64Patcher or KPlooshFinder based on the iOS
- * version in the kernelcache and silently drops flags inapplicable to the
- * detected tool.  Flags passed here cover the full iOS 15/16 surface:
- *
- *   -a   AMFI (15 + 16)
- *   -f   AppleFirmwareUpdate img4 sig check (15 + 16)
- *   -t   tfp0 (15 + 16)
- *   -d   developer mode (15 + 16)
- *   -s   SPUFirmwareValidation (15 only)
- *   -r   RootVPNotAuthenticatedAfterMounting (15 only)
- *   -o   could_not_authenticate_personalized_root_hash (15 only)
- *   -e   root volume seal is broken (15 only)
- *   -u   update_rootfs_rw (15 only)
+ * version in the kernelcache
  */
 static int stage_patch_kernel(rdsk_ctx_t *ctx)
 {
@@ -1139,7 +1128,7 @@ static int stage_patch_kernel(rdsk_ctx_t *ctx)
     snprintf(kpwn, sizeof(kpwn), "%s.pwn",       ctx->kernelcache);
     snprintf(diff, sizeof(diff), "%s/kc.bpatch", ctx->staging);
 
-    if (exec_tool(k64_bin, kdec, kpwn, "-a", NULL) != 0) {
+    if (exec_tool(k64_bin, kdec, kpwn, NULL) != 0) {
         log_error("stage_patch_kernel: Kernel64Patcher failed\n");
         return -1;
     }
@@ -1338,7 +1327,6 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
                           "-P", steps[i].patch,
                           "-M", ctx->im4m,
                           "-T", steps[i].type,
-                          "-J",
                           NULL);
         } else if (steps[i].plain) {
             r = exec_tool(img4_bin,
