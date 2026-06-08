@@ -494,12 +494,11 @@ build_img4() {
         # building lzfse from source; pass COMMONCRYPTO=1 so img4lib uses
         # the platform CommonCrypto rather than any third-party crypto lib.
         #
-        # -lcompression resolves via the SDK; no extra -L is required.
-        local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.11 -L${_SYSROOT}${PREFIX}/lib -lcompression"
+        local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.11 -L${_SYSROOT}${PREFIX}/lib"
 
         sed -i '' 's/^CFLAGS[[:space:]]*=[[:space:]]*-Wall -W -pedantic/CFLAGS = $(EXTRA_CFLAGS) -Wall -W -pedantic/' Makefile
 
-        "${MAKE_BIN}" EXTRA_CFLAGS="${IMG4_CFLAGS}" LDFLAGS="${IMG4_LDFLAGS}" COMMONCRYPTO=1 NOLZFSE=1 -j"${NCPU}"
+        "${MAKE_BIN}" EXTRA_CFLAGS="${IMG4_CFLAGS}" LDFLAGS="${IMG4_LDFLAGS}" COMMONCRYPTO=1 -j"${NCPU}"
     else
         # Linux: no libcompression; build lzfse from source (bundled submodule).
         #
