@@ -1327,6 +1327,7 @@ static int stage_build_img4(rdsk_ctx_t *ctx)
                           "-P", steps[i].patch,
                           "-M", ctx->im4m,
                           "-T", steps[i].type,
+                          "-J",
                           NULL);
         } else if (steps[i].plain) {
             r = exec_tool(img4_bin,
