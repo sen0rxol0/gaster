@@ -487,7 +487,7 @@ build_img4() {
         local arch="$1"
         local SDK
         SDK="$(xcrun --sdk macosx --show-sdk-path)"
-        local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.11 -O2 -fPIC"
+        local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.11 -O2 -fPIC -DUSE_LIBCOMPRESSION"
 
         # macOS ships libcompression.dylib (available since 10.11) which
         # provides the lzfse codec natively.  Link against it instead of
@@ -497,6 +497,7 @@ build_img4() {
         local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.11 -L${_SYSROOT}${PREFIX}/lib"
 
         sed -i '' 's/^CFLAGS[[:space:]]*=[[:space:]]*-Wall -W -pedantic/CFLAGS = $(EXTRA_CFLAGS) -Wall -W -pedantic/' Makefile
+        sed -i '' 's/^LDLIBS[[:space:]]*=[[:space:]]*-llzfse/LDLIBS = -lcompression/' Makefile
 
         "${MAKE_BIN}" EXTRA_CFLAGS="${IMG4_CFLAGS}" LDFLAGS="${IMG4_LDFLAGS}" COMMONCRYPTO=1 -j"${NCPU}"
     else
