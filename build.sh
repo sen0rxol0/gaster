@@ -487,21 +487,31 @@ build_img4() {
         local arch="$1"
         local SDK
         SDK="$(xcrun --sdk macosx --show-sdk-path)"
-        local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -O2 -fPIC"
-        local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.13 -L${_SYSROOT}${PREFIX}/lib -Llzfse/build/bin"
+        local IMG4_CFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.11 -O2 -fPIC"
+
+        # macOS ships libcompression.dylib (available since 10.11) which
+        # provides the lzfse codec natively.  Link against it instead of
+        # building lzfse from source; pass COMMONCRYPTO=1 so img4lib uses
+        # the platform CommonCrypto rather than any third-party crypto lib.
+        #
+        # -lcompression resolves via the SDK; no extra -L is required.
+        local IMG4_LDFLAGS="-arch ${arch} -isysroot ${SDK} -mmacosx-version-min=10.11 -L${_SYSROOT}${PREFIX}/lib -lcompression"
 
         sed -i '' 's/^CFLAGS[[:space:]]*=[[:space:]]*-Wall -W -pedantic/CFLAGS = $(EXTRA_CFLAGS) -Wall -W -pedantic/' Makefile
 
-        # Always rebuild lzfse from scratch for this arch so a prior
-        # arm64 .a is never reused by the x86_64 (or vice-versa) build.
+        "${MAKE_BIN}" EXTRA_CFLAGS="${IMG4_CFLAGS}" LDFLAGS="${IMG4_LDFLAGS}" COMMONCRYPTO=1 NOLZFSE=1 -j"${NCPU}"
+    else
+        # Linux: no libcompression; build lzfse from source (bundled submodule).
+        #
+        # Always rebuild lzfse from scratch for this arch so a prior build's
+        # .a is never reused by a different arch (relevant if the same src
+        # tree is shared across arm64 and x86_64 Linux builds).
         "${MAKE_BIN}" -C lzfse clean 2>/dev/null || true
         rm -rf lzfse/build   # belt-and-suspenders: nuke the cmake output dir
 
-        "${MAKE_BIN}" -C lzfse CFLAGS="${IMG4_CFLAGS}" -j"${NCPU}"
+        "${MAKE_BIN}" -C lzfse CFLAGS="${CFLAGS}" -j"${NCPU}"
 
-        "${MAKE_BIN}" EXTRA_CFLAGS="${IMG4_CFLAGS}" LDFLAGS="${IMG4_LDFLAGS}" COMMONCRYPTO=1 -j"${NCPU}"
-    else
-        "${MAKE_BIN}" -j"${NCPU}"
+        "${MAKE_BIN}" CFLAGS="${CFLAGS}" LDFLAGS="${LDFLAGS} -Llzfse/build/bin" -j"${NCPU}"
     fi
 
     install -d "${_SYSROOT}${PREFIX}/bin"
