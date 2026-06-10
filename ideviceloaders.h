@@ -176,45 +176,45 @@ device_loader_find(const char *product_type);   /* defined after table */
                             "45903C19-6F00-4014-88BF-5DA2A16D13CF/iPhone10,3,iPhone10,6_14.8_18H17_Restore.ipsw"
 
 /* ================================================================== *
- * iOS 15.7 (19H12) – ramdisk/trustcache confirmed from BuildManifest *
- * All boards in these IPSWs share ramdisk 078-69817-013.dmg          *
+ * iOS 15.6 (19G71) – ramdisk/trustcache confirmed from BuildManifest *
+ * All boards in these IPSWs share ramdisk 078-34285-078.dmg          *
  * ================================================================== */
 
-/* iPhone8,1  –  012-39051 */
-#define N71_157_TRUSTCACHE  "Firmware/078-69817-013.dmg.trustcache"
-#define N71_157_RAMDISK     "078-69817-013.dmg"
-#define N71_157_IPSW_URL    "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-39051/" \
-                            "60D8E589-3C30-4416-BEA9-2156217142BC/iPhone_4.7_15.7_19H12_Restore.ipsw"
+/* iPhone8,1  –  012-41736 */
+#define N71_156_TRUSTCACHE  "Firmware/078-34285-078.dmg.trustcache"
+#define N71_156_RAMDISK     "078-34285-078.dmg"
+#define N71_156_IPSW_URL    "https://updates.cdn-apple.com/2022SummerFCS/fullrestores/012-41736/" \
+                            "19A1E631-3FB4-4F85-BE5B-266C40FACEEB/iPhone_4.7_15.6_19G71_Restore.ipsw"
 
-/* iPhone8,2  –  012-39102 */
-#define N66_157_TRUSTCACHE  "Firmware/078-69817-013.dmg.trustcache"
-#define N66_157_RAMDISK     "078-69817-013.dmg"
-#define N66_157_IPSW_URL    "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-39102/" \
-                            "8B9B6001-92E2-49EC-969C-1E2BADF5602D/iPhone_5.5_15.7_19H12_Restore.ipsw"
+/* iPhone8,2  –  012-41696 */
+#define N66_156_TRUSTCACHE  "Firmware/078-34285-078.dmg.trustcache"
+#define N66_156_RAMDISK     "078-34285-078.dmg"
+#define N66_156_IPSW_URL    "https://updates.cdn-apple.com/2022SummerFCS/fullrestores/012-41696/" \
+                            "D6FEB203-82B2-40E4-95BE-83C0FDC46449/iPhone_5.5_15.6_19G71_Restore.ipsw"
 
-/* iPhone8,4  –  012-39072 */
-#define N69_157_TRUSTCACHE  "Firmware/078-69817-013.dmg.trustcache"
-#define N69_157_RAMDISK     "078-69817-013.dmg"
-#define N69_157_IPSW_URL    "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-39072/" \
-                            "BFDAFD43-D3FF-4811-B210-6A104D91A201/iPhone_4.0_64bit_15.7_19H12_Restore.ipsw"
+/* iPhone8,4  –  012-41753 */
+#define N69_156_TRUSTCACHE  "Firmware/078-34285-078.dmg.trustcache"
+#define N69_156_RAMDISK     "078-34285-078.dmg"
+#define N69_156_IPSW_URL    "https://updates.cdn-apple.com/2022SummerFCS/fullrestores/012-41753/" \
+                            "03DF14B7-8351-497E-B02E-188251541117/iPhone_4.0_64bit_15.6_19G71_Restore.ipsw"
 
-/* iPhone9,1 / 9,3 / 10,1 / 10,4  –  012-38914 */
-#define D10_157_TRUSTCACHE  "Firmware/078-69817-013.dmg.trustcache"
-#define D10_157_RAMDISK     "078-69817-013.dmg"
-#define D10_157_IPSW_URL    "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-38914/" \
-                            "C7764173-5CC4-4D58-8F8B-F093F9A060F0/iPhone_4.7_P3_15.7_19H12_Restore.ipsw"
+/* iPhone9,1 / 9,3 / 10,1 / 10,4  –  012-41763 */
+#define D10_156_TRUSTCACHE  "Firmware/078-34285-078.dmg.trustcache"
+#define D10_156_RAMDISK     "078-34285-078.dmg"
+#define D10_156_IPSW_URL    "https://updates.cdn-apple.com/2022SummerFCS/fullrestores/012-41763/" \
+                            "0BC321DF-1A4E-473B-9EE0-BF126CB1CDA8/iPhone_4.7_P3_15.6_19G71_Restore.ipsw"
 
-/* iPhone9,2 / 9,4 / 10,2 / 10,5  –  012-38894 */
-#define D11_157_TRUSTCACHE  "Firmware/078-69817-013.dmg.trustcache"
-#define D11_157_RAMDISK     "078-69817-013.dmg"
-#define D11_157_IPSW_URL    "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-38894/" \
-                            "94B29539-E9B4-4288-B79B-957D8A074982/iPhone_5.5_P3_15.7_19H12_Restore.ipsw"
+/* iPhone9,2 / 9,4 / 10,2 / 10,5  –  012-41737 */
+#define D11_156_TRUSTCACHE  "Firmware/078-34285-078.dmg.trustcache"
+#define D11_156_RAMDISK     "078-34285-078.dmg"
+#define D11_156_IPSW_URL    "https://updates.cdn-apple.com/2022SummerFCS/fullrestores/012-41737/" \
+                            "79896428-EDB5-4553-A65E-A1262ED2D342/iPhone_5.5_P3_15.6_19G71_Restore.ipsw"
 
-/* iPhone10,3 / 10,6  –  012-39067 */
-#define D22_157_TRUSTCACHE  "Firmware/078-69817-013.dmg.trustcache"
-#define D22_157_RAMDISK     "078-69817-013.dmg"
-#define D22_157_IPSW_URL    "https://updates.cdn-apple.com/2022FallFCS/fullrestores/012-39067/" \
-                            "20ACC1A5-8816-484B-A176-DB3A54B16299/iPhone10,3,iPhone10,6_15.7_19H12_Restore.ipsw"
+/* iPhone10,3 / 10,6  –  012-41672 */
+#define D22_156_TRUSTCACHE  "Firmware/078-34285-078.dmg.trustcache"
+#define D22_156_RAMDISK     "078-34285-078.dmg"
+#define D22_156_IPSW_URL    "https://updates.cdn-apple.com/2022SummerFCS/fullrestores/012-41672/" \
+                            "846D04AF-17E5-4EE5-97D5-143CF58C74DB/iPhone10,3,iPhone10,6_15.6_19G71_Restore.ipsw"
 
 /* ================================================================== *
  * Convenience macros: V_<version>_<board>                            *
@@ -239,24 +239,24 @@ device_loader_find(const char *product_type);   /* defined after table */
 #define V_148_D22 { "14.8", D22_IBSS_IVKEY, D22_IBSS_PATH, D22_IBEC_IVKEY, D22_IBEC_PATH, \
                     D22_DEVICETREE, D22_148_TRUSTCACHE, D22_KERNELCACHE, D22_148_RAMDISK, D22_148_IPSW_URL }
 
-/* --- 15.7 --- */
-#define V_157_N71 { "15.7", N71_IBSS_IVKEY, N71_IBSS_PATH, N71_IBEC_IVKEY, N71_IBEC_PATH, \
-                    N71_DEVICETREE, N71_157_TRUSTCACHE, N71_KERNELCACHE, N71_157_RAMDISK, N71_157_IPSW_URL }
+/* --- 15.6 --- */
+#define V_156_N71 { "15.6", N71_IBSS_IVKEY, N71_IBSS_PATH, N71_IBEC_IVKEY, N71_IBEC_PATH, \
+                    N71_DEVICETREE, N71_156_TRUSTCACHE, N71_KERNELCACHE, N71_156_RAMDISK, N71_156_IPSW_URL }
 
-#define V_157_N66 { "15.7", N66_IBSS_IVKEY, N66_IBSS_PATH, N66_IBEC_IVKEY, N66_IBEC_PATH, \
-                    N66_DEVICETREE, N66_157_TRUSTCACHE, N66_KERNELCACHE, N66_157_RAMDISK, N66_157_IPSW_URL }
+#define V_156_N66 { "15.6", N66_IBSS_IVKEY, N66_IBSS_PATH, N66_IBEC_IVKEY, N66_IBEC_PATH, \
+                    N66_DEVICETREE, N66_156_TRUSTCACHE, N66_KERNELCACHE, N66_156_RAMDISK, N66_156_IPSW_URL }
 
-#define V_157_N69 { "15.7", N69_IBSS_IVKEY, N69_IBSS_PATH, N69_IBEC_IVKEY, N69_IBEC_PATH, \
-                    N69_DEVICETREE, N69_157_TRUSTCACHE, N69_KERNELCACHE, N69_157_RAMDISK, N69_157_IPSW_URL }
+#define V_156_N69 { "15.6", N69_IBSS_IVKEY, N69_IBSS_PATH, N69_IBEC_IVKEY, N69_IBEC_PATH, \
+                    N69_DEVICETREE, N69_156_TRUSTCACHE, N69_KERNELCACHE, N69_156_RAMDISK, N69_156_IPSW_URL }
 
-#define V_157_D10 { "15.7", D10_IBSS_IVKEY, D10_IBSS_PATH, D10_IBEC_IVKEY, D10_IBEC_PATH, \
-                    D10_DEVICETREE, D10_157_TRUSTCACHE, D10_KERNELCACHE, D10_157_RAMDISK, D10_157_IPSW_URL }
+#define V_156_D10 { "15.6", D10_IBSS_IVKEY, D10_IBSS_PATH, D10_IBEC_IVKEY, D10_IBEC_PATH, \
+                    D10_DEVICETREE, D10_156_TRUSTCACHE, D10_KERNELCACHE, D10_156_RAMDISK, D10_156_IPSW_URL }
 
-#define V_157_D11 { "15.7", D11_IBSS_IVKEY, D11_IBSS_PATH, D11_IBEC_IVKEY, D11_IBEC_PATH, \
-                    D11_DEVICETREE, D11_157_TRUSTCACHE, D11_KERNELCACHE, D11_157_RAMDISK, D11_157_IPSW_URL }
+#define V_156_D11 { "15.6", D11_IBSS_IVKEY, D11_IBSS_PATH, D11_IBEC_IVKEY, D11_IBEC_PATH, \
+                    D11_DEVICETREE, D11_156_TRUSTCACHE, D11_KERNELCACHE, D11_156_RAMDISK, D11_156_IPSW_URL }
 
-#define V_157_D22 { "15.7", D22_IBSS_IVKEY, D22_IBSS_PATH, D22_IBEC_IVKEY, D22_IBEC_PATH, \
-                    D22_DEVICETREE, D22_157_TRUSTCACHE, D22_KERNELCACHE, D22_157_RAMDISK, D22_157_IPSW_URL }
+#define V_156_D22 { "15.6", D22_IBSS_IVKEY, D22_IBSS_PATH, D22_IBEC_IVKEY, D22_IBEC_PATH, \
+                    D22_DEVICETREE, D22_156_TRUSTCACHE, D22_KERNELCACHE, D22_156_RAMDISK, D22_156_IPSW_URL }
 
 /* Sentinel entry marking the end of a versions array */
 #define V_END  { NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL }
@@ -275,19 +275,19 @@ static const device_loader device_loaders[] = {
     { "iPhone6,2",  { V_END } },
     { "iPhone7,1",  { V_END } },
     { "iPhone7,2",  { V_END } },
-    { "iPhone8,1",  { V_148_N71, V_157_N71, V_END } },
-    { "iPhone8,2",  { V_148_N66, V_157_N66, V_END } },
-    { "iPhone8,4",  { V_148_N69, V_157_N69, V_END } },
-    { "iPhone9,1",  { V_148_D10, V_157_D10, V_END } },
-    { "iPhone9,2",  { V_148_D11, V_157_D11, V_END } },
-    { "iPhone9,3",  { V_148_D10, V_157_D10, V_END } },
-    { "iPhone9,4",  { V_148_D11, V_157_D11, V_END } },
-    { "iPhone10,1", { V_148_D10, V_157_D10, V_END } },
-    { "iPhone10,2", { V_148_D11, V_157_D11, V_END } },
-    { "iPhone10,3", { V_148_D22, V_157_D22, V_END } },
-    { "iPhone10,4", { V_148_D10, V_157_D10, V_END } },
-    { "iPhone10,5", { V_148_D11, V_157_D11, V_END } },
-    { "iPhone10,6", { V_148_D22, V_157_D22, V_END } },
+    { "iPhone8,1",  { V_148_N71, V_156_N71, V_END } },
+    { "iPhone8,2",  { V_148_N66, V_156_N66, V_END } },
+    { "iPhone8,4",  { V_148_N69, V_156_N69, V_END } },
+    { "iPhone9,1",  { V_148_D10, V_156_D10, V_END } },
+    { "iPhone9,2",  { V_148_D11, V_156_D11, V_END } },
+    { "iPhone9,3",  { V_148_D10, V_156_D10, V_END } },
+    { "iPhone9,4",  { V_148_D11, V_156_D11, V_END } },
+    { "iPhone10,1", { V_148_D10, V_156_D10, V_END } },
+    { "iPhone10,2", { V_148_D11, V_156_D11, V_END } },
+    { "iPhone10,3", { V_148_D22, V_156_D22, V_END } },
+    { "iPhone10,4", { V_148_D10, V_156_D10, V_END } },
+    { "iPhone10,5", { V_148_D11, V_156_D11, V_END } },
+    { "iPhone10,6", { V_148_D22, V_156_D22, V_END } },
 
     /* ---- iPad ---- */
     { "iPad1,1",    { V_END } },
